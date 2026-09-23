@@ -843,18 +843,25 @@ function renderStackedUsageBar() {
 }
 
 function scrollToBottom() {
-  const c = document.getElementById("timeline-container");
+  scrollToViewBottom("timeline-container");
+}
+
+function scrollToViewBottom(containerId) {
+  const c = document.getElementById(containerId);
   if (c) {
     c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
   }
 }
 
 function handleTimelineScroll() {
-  const c = document.getElementById("timeline-container");
-  const fab = document.getElementById("fab-scroll-bottom");
-  if (!c || !fab) return;
-  const distanceFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
-  if (distanceFromBottom > 350) {
+  handleViewScroll(document.getElementById("timeline-container"), "fab-scroll-bottom");
+}
+
+function handleViewScroll(container, fabId) {
+  const fab = typeof fabId === "string" ? document.getElementById(fabId) : fabId;
+  if (!container || !fab) return;
+  const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+  if (distanceFromBottom > 250) {
     fab.style.display = "flex";
   } else {
     fab.style.display = "none";

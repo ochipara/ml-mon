@@ -100,7 +100,6 @@
             <input type="checkbox" id="toggle-autoscroll" checked>
             <span>⬇️ Auto-scroll</span>
           </label>
-          <button class="action-pill-btn" onclick="scrollToBottom()" title="Jump to the end of all messages">⬇️ End</button>
         </div>
       </div>
 
@@ -116,7 +115,7 @@
 
       <!-- View 2: Live Plan & Walkthrough -->
       <section class="tab-view" id="view-plan">
-        <div class="plan-container">
+        <div class="plan-container" id="plan-container" onscroll="handleViewScroll(this, 'fab-scroll-plan')">
           <div class="plan-card">
             <div class="plan-header">
               <h2>📋 Implementation Plan</h2>
@@ -136,11 +135,12 @@
             </div>
           </div>
         </div>
+        <button class="fab-scroll-bottom" id="fab-scroll-plan" onclick="scrollToViewBottom('plan-container')" title="Jump to End">⬇️</button>
       </section>
 
       <!-- View 3: Files Touched -->
       <section class="tab-view" id="view-files">
-        <div class="files-view-container">
+        <div class="files-view-container" id="files-view-container" onscroll="handleViewScroll(this, 'fab-scroll-files')">
           <div class="view-panel-header">
             <h2>📁 Files Created & Modified</h2>
             <p class="dim-text">All workspace files edited or created during this session.</p>
@@ -149,11 +149,12 @@
             <div class="loading-placeholder">No file modifications recorded in this session.</div>
           </div>
         </div>
+        <button class="fab-scroll-bottom" id="fab-scroll-files" onclick="scrollToViewBottom('files-view-container')" title="Jump to End">⬇️</button>
       </section>
 
       <!-- View 4: Media & Logs Gallery -->
       <section class="tab-view" id="view-media">
-        <div class="media-view-container">
+        <div class="media-view-container" id="media-view-container" onscroll="handleViewScroll(this, 'fab-scroll-media')">
           <div class="view-panel-header">
             <h2>🖼️ Visual Artifacts & Background Task Logs</h2>
             <p class="dim-text">Screenshots, browser automation recordings, and detached task execution logs.</p>
@@ -162,11 +163,12 @@
             <div class="loading-placeholder">No media artifacts generated in this session.</div>
           </div>
         </div>
+        <button class="fab-scroll-bottom" id="fab-scroll-media" onclick="scrollToViewBottom('media-view-container')" title="Jump to End">⬇️</button>
       </section>
 
       <!-- View 5: IDE Context & Analytics -->
       <section class="tab-view" id="view-context">
-        <div class="context-view-container">
+        <div class="context-view-container" id="context-view-container" onscroll="handleViewScroll(this, 'fab-scroll-context')">
           <div class="context-grid">
             <!-- IDE State Card -->
             <div class="context-card">
@@ -199,11 +201,12 @@
             </div>
           </div>
         </div>
+        <button class="fab-scroll-bottom" id="fab-scroll-context" onclick="scrollToViewBottom('context-view-container')" title="Jump to End">⬇️</button>
       </section>
 
       <!-- View 6: Context Window & Token Usage Inspector -->
       <section class="tab-view" id="view-usage">
-        <div class="usage-view-container">
+        <div class="usage-view-container" id="usage-view-container" onscroll="handleViewScroll(this, 'fab-scroll-usage')">
           <div class="view-panel-header">
             <h2>🔍 LLM Context Window & Token Usage Inspector</h2>
             <p class="dim-text">Inspect the exact message frames, compaction boundaries, and token distribution in the LLM prompt.</p>
@@ -280,6 +283,7 @@
             <div class="loading-placeholder">Loading context window report...</div>
           </div>
         </div>
+        <button class="fab-scroll-bottom" id="fab-scroll-usage" onclick="scrollToViewBottom('usage-view-container')" title="Jump to End">⬇️</button>
       </section>
     </main>
   </div>

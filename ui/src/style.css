@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg-base: #0c0e14;
   --bg-surface: #141722;
   --bg-elevated: #1a1e2e;
@@ -14,7 +15,7 @@
   --accent-blue: #3b82f6;
   --accent-blue-glow: rgba(59, 130, 246, 0.15);
   --accent-green: #10b981;
-  --accent-green-glow: rgba(16, 185, 129, 0.2);
+  --accent-green-glow: rgba(168, 85, 247, 0.2);
   --accent-yellow: #f59e0b;
   --accent-red: #ef4444;
 
@@ -26,6 +27,33 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+/* Modern Dark-Themed Scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 body {
@@ -426,6 +454,7 @@ body {
   flex: 1;
   overflow: hidden;
   height: calc(100vh - 125px);
+  position: relative;
 }
 
 .tab-view.active {
