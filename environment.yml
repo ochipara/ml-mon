@@ -1,0 +1,9 @@
+name: ml-mon
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -e ./server[dev,web]

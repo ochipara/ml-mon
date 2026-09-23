@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>gmon — Antigravity Session & CoT Visualizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <span class="brand-logo">⚡</span>
+          <span class="brand-name">gmon</span>
+          <span class="badge version">v0.2</span>
+        </div>
+        <div class="search-box">
+          <input type="text" id="session-search" placeholder="Search sessions...">
+        </div>
+      </div>
+      <div class="session-list" id="session-list">
+        <div class="loading-placeholder">Loading sessions...</div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Navigation & Stats Bar -->
+      <header class="top-nav">
+        <div class="session-info">
+          <div class="status-indicator">
+            <span class="pulse-dot idle" id="session-status-dot"></span>
+            <span class="status-text" id="session-status-text">Connecting...</span>
+          </div>
+          <h1 class="session-title" id="active-session-title">Select a session</h1>
+          <span class="badge model-badge" id="active-session-model">Model: -</span>
+          <span class="session-id-pill" id="active-session-id">-</span>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <div class="tab-group">
+          <button class="tab-btn active" id="tab-timeline" onclick="switchTab('timeline')">💬 Timeline & CoT</button>
+          <button class="tab-btn" id="tab-plan" onclick="switchTab('plan')">📋 Plan & Walkthrough</button>
+          <button class="tab-btn" id="tab-files" onclick="switchTab('files')">📁 Files Touched <span class="tab-counter" id="cnt-files">0</span></button>
+          <button class="tab-btn" id="tab-media" onclick="switchTab('media')">🖼️ Media & Logs <span class="tab-counter" id="cnt-media">0</span></button>
+          <button class="tab-btn" id="tab-context" onclick="switchTab('context')">📊 IDE Context</button>
+        </div>
+      </header>
+
+      <!-- Sub-header Timeline Filter Bar -->
+      <div class="filter-bar" id="timeline-filter-bar">
+        <div class="filter-search">
+          <span class="filter-search-icon">🔍</span>
+          <input type="text" id="timeline-search" placeholder="Filter steps, tools, or code..." oninput="applyFilters()">
+        </div>
+        <div class="filter-controls">
+          <label class="toggle-control">
+            <input type="checkbox" id="toggle-cot" checked onchange="applyFilters()">
+            <span>🧠 CoT</span>
+          </label>
+          <label class="toggle-control">
+            <input type="checkbox" id="toggle-tools" checked onchange="applyFilters()">
+            <span>🛠️ Tools</span>
+          </label>
+          <label class="toggle-control">
+            <input type="checkbox" id="toggle-checkpoints" checked onchange="applyFilters()">
+            <span>⚙️ System</span>
+          </label>
+          <label class="toggle-control error-toggle">
+            <input type="checkbox" id="toggle-errors" onchange="applyFilters()">
+            <span>❌ Errors Only</span>
+          </label>
+          <label class="toggle-control">
+            <input type="checkbox" id="toggle-autoscroll" checked>
+            <span>⬇️ Auto-scroll</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- View 1: Timeline & CoT -->
+      <section class="tab-view active" id="view-timeline">
+        <div class="timeline-stream" id="timeline-container">
+          <div class="empty-state">
+            <p>Select a conversation from the sidebar to inspect its timeline and live Chain of Thought.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 2: Live Plan & Walkthrough -->
+      <section class="tab-view" id="view-plan">
+        <div class="plan-container">
+          <div class="plan-card">
+            <div class="plan-header">
+              <h2>📋 Implementation Plan</h2>
+              <span class="plan-badge" id="plan-status-badge">Available</span>
+            </div>
+            <div class="markdown-body" id="plan-content">
+              <p class="dim-text">No implementation plan found for this session.</p>
+            </div>
+          </div>
+          <div class="plan-card">
+            <div class="plan-header">
+              <h2>📝 Walkthrough</h2>
+              <span class="plan-badge" id="wt-status-badge">Available</span>
+            </div>
+            <div class="markdown-body" id="walkthrough-content">
+              <p class="dim-text">No walkthrough found for this session.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 3: Files Touched -->
+      <section class="tab-view" id="view-files">
+        <div class="files-view-container">
+          <div class="view-panel-header">
+            <h2>📁 Files Created & Modified</h2>
+            <p class="dim-text">All workspace files edited or created during this session.</p>
+          </div>
+          <div class="file-list" id="files-touched-list">
+            <div class="loading-placeholder">No file modifications recorded in this session.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 4: Media & Logs Gallery -->
+      <section class="tab-view" id="view-media">
+        <div class="media-view-container">
+          <div class="view-panel-header">
+            <h2>🖼️ Visual Artifacts & Background Task Logs</h2>
+            <p class="dim-text">Screenshots, browser automation recordings, and detached task execution logs.</p>
+          </div>
+          <div class="media-grid" id="media-artifacts-grid">
+            <div class="loading-placeholder">No media artifacts generated in this session.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 5: IDE Context & Analytics -->
+      <section class="tab-view" id="view-context">
+        <div class="context-view-container">
+          <div class="context-grid">
+            <!-- IDE State Card -->
+            <div class="context-card">
+              <div class="context-card-header">
+                <h3>💻 IDE State at Prompt</h3>
+              </div>
+              <div class="context-card-body" id="ide-state-body">
+                <p class="dim-text">No IDE state captured.</p>
+              </div>
+            </div>
+
+            <!-- Tool Usage Analytics -->
+            <div class="context-card">
+              <div class="context-card-header">
+                <h3>🛠️ Tool Invocations Breakdown</h3>
+              </div>
+              <div class="context-card-body" id="tool-breakdown-body">
+                <p class="dim-text">No tool calls recorded.</p>
+              </div>
+            </div>
+
+            <!-- Reasoning & Performance -->
+            <div class="context-card full-width">
+              <div class="context-card-header">
+                <h3>⚡ Session Performance & Latency</h3>
+              </div>
+              <div class="context-card-body" id="session-perf-body">
+                <p class="dim-text">Computing performance metrics...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
