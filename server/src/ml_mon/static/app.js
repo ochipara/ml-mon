@@ -4,6 +4,9 @@ let activeSessionId = null;
 let currentEventSource = null;
 let allSessions = [];
 let currentSessionDetail = null;
+let currentContextReport = null;
+let contextBarMode = "relative";
+let contextCapacityLimit = 1000000;
 const renderedStepIds = new Set();
 
 // Configure marked if loaded
@@ -73,42 +76,55 @@ async function loadSessions() {
 }
 
 function renderSessionList(sessions) {
-  const container = document.getElementById("session-list");
-  if (!sessions.length) {
-    container.innerHTML = '<div class="loading-placeholder">No conversations found.</div>';
-    return;
+  // 1. Populate dropdown
+  const dropdown = document.getElementById("session-dropdown");
+  if (dropdown) {
+    if (!sessions.length) {
+      dropdown.innerHTML = '<option value="" disabled selected>No conversations found</option>';
+    } else {
+      dropdown.innerHTML = sessions.map(s => {
+        const isSelected = s.id === activeSessionId ? "selected" : "";
+        const statusMark = s.is_active ? "● LIVE: " : "";
+        const time = s.last_modified ? s.last_modified.replace("T", " ").substring(5, 16) : "";
+        const titleSnippet = s.title.length > 50 ? s.title.substring(0, 50) + "…" : s.title;
+        return `<option value="${s.id}" ${isSelected}>${statusMark}${escapeHtml(titleSnippet)} (${s.step_count} steps • ${time})</option>`;
+      }).join("");
+    }
   }
 
-  container.innerHTML = sessions
-    .map((s) => {
+  // 2. Populate recent session pills (up to 8)
+  const strip = document.getElementById("recent-sessions-strip");
+  if (strip) {
+    const recent = sessions.slice(0, 8);
+    strip.innerHTML = recent.map(s => {
       const isSelected = s.id === activeSessionId ? "active" : "";
-      const statusBadge = s.is_active
-        ? '<span class="badge-live">LIVE</span>'
-        : '<span style="color: var(--text-dim);">○ IDLE</span>';
-      const planBadge = s.has_plan ? "📋 Plan" : "";
-      const shortId = s.id.substring(0, 8);
-      const time = s.last_modified
-        ? s.last_modified.replace("T", " ").substring(5, 16)
-        : "";
-
+      const liveDot = s.is_active ? '<span style="color: var(--accent-green); font-weight: bold;">●</span>' : '<span style="color: var(--text-dim);">○</span>';
+      const shortTitle = s.title.length > 22 ? s.title.substring(0, 22) + "…" : s.title;
       return `
-      <div class="session-item ${isSelected}" onclick="selectSession('${s.id}')">
-        <div class="session-item-header">
-          <span class="session-item-id">${shortId}…</span>
-          <span class="session-item-time">🕒 ${time}</span>
+        <div class="session-pill ${isSelected}" onclick="selectSession('${s.id}')" title="${escapeHtml(s.title)} (${s.id})">
+          ${liveDot}
+          <span>${escapeHtml(shortTitle)}</span>
+          <span style="color: var(--text-dim); font-size: 11px;">(${s.step_count})</span>
         </div>
-        <div class="session-item-title" title="${escapeHtml(s.title)}">
-          ${escapeHtml(s.title)}
-        </div>
-        <div class="session-item-footer">
-          ${statusBadge}
-          <span>⚡ ${s.step_count} steps</span>
-          <span style="color: var(--accent-yellow); font-weight: 600;">${planBadge}</span>
-        </div>
-      </div>
-    `;
-    })
-    .join("");
+      `;
+    }).join("");
+  }
+}
+
+function filterSessions() {
+  const query = (document.getElementById("session-search").value || "").toLowerCase().trim();
+  const liveOnly = document.getElementById("toggle-live-only").checked;
+
+  const filtered = allSessions.filter(s => {
+    if (liveOnly && !s.is_active) return false;
+    if (query.length > 0) {
+      const match = s.title.toLowerCase().includes(query) || s.id.toLowerCase().includes(query);
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  renderSessionList(filtered);
 }
 
 // Select a session and populate all tabs & live streaming
@@ -182,6 +198,11 @@ async function selectSession(sessionId) {
     // 6. Render IDE Context & Analytics Tab
     renderContextTab(detail);
 
+    // 7. If on Context & Usage tab, load it
+    if (document.getElementById("tab-usage") && document.getElementById("tab-usage").classList.contains("active")) {
+      loadContextWindow(sessionId);
+    }
+
     // Apply active filters
     applyFilters();
 
@@ -243,6 +264,7 @@ function appendStepToTimeline(step, shouldScroll) {
   // Check if this step is a checkpoint/compaction
   if (step.is_checkpoint || step.step_type === "CHECKPOINT") {
     const cpText = step.raw_content || step.user_prompt || "Session compacted / state checkpointed.";
+    const estSummaryTokens = Math.ceil(cpText.length / 4);
     cards.push(`
       <div class="timeline-card card-checkpoint step-checkpoint" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(cpText.toLowerCase())}">
         <div class="card-header">
@@ -251,6 +273,15 @@ function appendStepToTimeline(step, shouldScroll) {
         </div>
         <div class="card-body">
           <p class="dim-text">${renderMarkdown(cpText)}</p>
+          <div class="checkpoint-context-bar">
+            <div class="checkpoint-context-header">
+              <span>⚡ <strong>Compaction Context Boundary:</strong> Context attention reset to baseline summary</span>
+              <span class="tool-badge" style="color: var(--accent-yellow); font-weight: 600;">~${estSummaryTokens.toLocaleString()} tokens in summary</span>
+            </div>
+            <div class="mini-context-bar">
+              <div class="mini-bar-segment" style="width: 100%; background-color: #6b7280;" title="Compaction Baseline Summary: ~${estSummaryTokens.toLocaleString()} tokens"></div>
+            </div>
+          </div>
         </div>
       </div>
     `);
@@ -652,7 +683,234 @@ function switchTab(tab) {
     document.getElementById("tab-context").classList.add("active");
     document.getElementById("view-context").classList.add("active");
     if (filterBar) filterBar.style.display = "none";
+  } else if (tab === "usage") {
+    document.getElementById("tab-usage").classList.add("active");
+    document.getElementById("view-usage").classList.add("active");
+    if (filterBar) filterBar.style.display = "none";
+    loadContextWindow(activeSessionId);
   }
+}
+
+// Load Context Window & Token Usage Report
+async function loadContextWindow(sessionId) {
+  if (!sessionId) return;
+  const listEl = document.getElementById("context-frames-list");
+  listEl.innerHTML = '<div class="loading-placeholder">Loading context window report...</div>';
+
+  try {
+    const res = await fetch(`/api/conversations/${sessionId}/context`);
+    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+    const report = await res.json();
+    currentContextReport = report;
+
+    // 1. Metric Cards
+    document.getElementById("usage-active-tokens").innerText = report.total_active_tokens.toLocaleString();
+    document.getElementById("usage-active-chars").innerText = `${report.total_active_chars.toLocaleString()} characters`;
+    document.getElementById("usage-total-tokens").innerText = report.total_session_tokens.toLocaleString();
+    document.getElementById("usage-total-chars").innerText = `${report.total_session_chars.toLocaleString()} characters`;
+
+    const statusEl = document.getElementById("usage-compaction-status");
+    const boundaryEl = document.getElementById("usage-active-boundary");
+    if (report.has_compaction) {
+      statusEl.innerText = `Compacted (${report.compaction_count}x)`;
+      statusEl.className = "stat-val yellow";
+      boundaryEl.innerText = `Active from Step ${report.active_window_start_step}`;
+    } else {
+      statusEl.innerText = "Full History";
+      statusEl.className = "stat-val green";
+      boundaryEl.innerText = "No compactions triggered";
+    }
+
+    const activeFramesCount = report.frames.filter((f) => f.is_active).length;
+    document.getElementById("usage-active-frames").innerText = activeFramesCount.toLocaleString();
+    document.getElementById("usage-total-frames").innerText = `of ${report.frames.length.toLocaleString()} total session frames`;
+
+    // 2. Stacked Utilization Progress Bar
+    renderStackedUsageBar();
+
+    // 3. Render Frames
+    filterContextFrames();
+  } catch (err) {
+    listEl.innerHTML = `<div class="empty-state">Failed to load context report: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function setContextBarMode(mode) {
+  contextBarMode = mode;
+  const btnRel = document.getElementById("btn-mode-relative");
+  const btnAbs = document.getElementById("btn-mode-absolute");
+  const selectLimit = document.getElementById("select-capacity-limit");
+  const titleEl = document.getElementById("usage-bar-title");
+  const subtitleEl = document.getElementById("usage-bar-subtitle");
+
+  if (mode === "relative") {
+    btnRel.classList.add("active");
+    btnAbs.classList.remove("active");
+    if (selectLimit) selectLimit.style.display = "none";
+    if (titleEl) titleEl.innerText = "Active Context Window Distribution";
+    if (subtitleEl) subtitleEl.innerText = "Relative share (%) of active tokens across components";
+  } else {
+    btnRel.classList.remove("active");
+    btnAbs.classList.add("active");
+    if (selectLimit) selectLimit.style.display = "inline-block";
+    if (titleEl) titleEl.innerText = "Context Window Capacity Utilization";
+    if (subtitleEl) subtitleEl.innerText = `Active tokens versus model capacity limit (${contextCapacityLimit.toLocaleString()} tokens)`;
+  }
+
+  renderStackedUsageBar();
+}
+
+function updateContextCapacityLimit(val) {
+  contextCapacityLimit = parseInt(val, 10) || 1000000;
+  const subtitleEl = document.getElementById("usage-bar-subtitle");
+  if (subtitleEl && contextBarMode === "absolute") {
+    subtitleEl.innerText = `Active tokens versus model capacity limit (${contextCapacityLimit.toLocaleString()} tokens)`;
+  }
+  renderStackedUsageBar();
+}
+
+function renderStackedUsageBar() {
+  if (!currentContextReport) return;
+  const barEl = document.getElementById("usage-stacked-bar");
+  const legendEl = document.getElementById("usage-stacked-legend");
+  if (!barEl || !legendEl) return;
+
+  const catColors = {
+    compaction_summary: "#9ca3af",
+    user_prompts: "#10b981",
+    cot_reasoning: "#a855f7",
+    tool_outputs: "#f59e0b",
+    assistant_responses: "#06b6d4",
+    system_history: "#3b82f6",
+  };
+
+  const segments = [];
+  const legends = [];
+  const totalActive = currentContextReport.total_active_tokens;
+
+  if (contextBarMode === "relative") {
+    for (const b of currentContextReport.breakdown) {
+      if (b.percentage > 0) {
+        const color = catColors[b.category] || "#6366f1";
+        segments.push(`
+          <div class="bar-segment" style="width: ${b.percentage}%; background-color: ${color};" title="${escapeHtml(b.label)}: ${b.est_tokens.toLocaleString()} tokens (${b.percentage}%)"></div>
+        `);
+        legends.push(`
+          <div class="legend-item">
+            <span class="legend-dot" style="background-color: ${color};"></span>
+            <span><strong>${escapeHtml(b.label)}</strong>: ${b.est_tokens.toLocaleString()} tokens (${b.percentage}%)</span>
+          </div>
+        `);
+      }
+    }
+  } else {
+    // Absolute Capacity mode
+    const capacity = contextCapacityLimit;
+    const usedPct = Math.min(100, (totalActive / capacity) * 100);
+
+    for (const b of currentContextReport.breakdown) {
+      if (b.est_tokens > 0) {
+        const segPct = (b.est_tokens / capacity) * 100;
+        const color = catColors[b.category] || "#6366f1";
+        segments.push(`
+          <div class="bar-segment" style="width: ${segPct}%; background-color: ${color};" title="${escapeHtml(b.label)}: ${b.est_tokens.toLocaleString()} tokens (${segPct.toFixed(1)}% of capacity)"></div>
+        `);
+        legends.push(`
+          <div class="legend-item">
+            <span class="legend-dot" style="background-color: ${color};"></span>
+            <span><strong>${escapeHtml(b.label)}</strong>: ${b.est_tokens.toLocaleString()} tokens (${segPct.toFixed(1)}%)</span>
+          </div>
+        `);
+      }
+    }
+
+    // Remaining Headroom segment
+    const headroomPct = Math.max(0, 100 - usedPct);
+    const headroomTokens = Math.max(0, capacity - totalActive);
+    segments.push(`
+      <div class="bar-segment" style="width: ${headroomPct}%; background-color: rgba(255, 255, 255, 0.06);" title="Available Headroom: ${headroomTokens.toLocaleString()} tokens (${headroomPct.toFixed(1)}%)"></div>
+    `);
+    legends.push(`
+      <div class="legend-item" style="opacity: 0.7;">
+        <span class="legend-dot" style="background-color: rgba(255, 255, 255, 0.2);"></span>
+        <span><strong>Available Headroom</strong>: ${headroomTokens.toLocaleString()} tokens (${headroomPct.toFixed(1)}%)</span>
+      </div>
+    `);
+  }
+
+  barEl.innerHTML = segments.join("");
+  legendEl.innerHTML = legends.join("");
+}
+
+function scrollToBottom() {
+  const c = document.getElementById("timeline-container");
+  if (c) {
+    c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
+  }
+}
+
+function handleTimelineScroll() {
+  const c = document.getElementById("timeline-container");
+  const fab = document.getElementById("fab-scroll-bottom");
+  if (!c || !fab) return;
+  const distanceFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
+  if (distanceFromBottom > 350) {
+    fab.style.display = "flex";
+  } else {
+    fab.style.display = "none";
+  }
+}
+
+function filterContextFrames() {
+  if (!currentContextReport || !currentContextReport.frames) return;
+  const listEl = document.getElementById("context-frames-list");
+  const query = (document.getElementById("frame-search").value || "").toLowerCase().trim();
+  const activeOnly = document.getElementById("toggle-active-only").checked;
+
+  const filtered = currentContextReport.frames.filter((f) => {
+    if (activeOnly && !f.is_active) return false;
+    if (query.length > 0) {
+      const match = f.title.toLowerCase().includes(query) ||
+                    f.preview.toLowerCase().includes(query) ||
+                    f.full_content.toLowerCase().includes(query) ||
+                    f.frame_type.toLowerCase().includes(query);
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  if (!filtered.length) {
+    listEl.innerHTML = '<div class="empty-state">No matching context frames found.</div>';
+    return;
+  }
+
+  listEl.innerHTML = filtered.map((f) => {
+    const bodyId = `frame-body-${f.index}`;
+    const prunedClass = f.is_active ? "" : "pruned";
+    const statusBadge = f.is_active
+      ? '<span class="tool-badge" style="color: var(--accent-green); font-weight: 600;">ACTIVE</span>'
+      : '<span class="tool-badge" style="color: var(--text-dim);">PRUNED</span>';
+
+    return `
+      <div class="frame-card ${prunedClass}">
+        <div class="frame-header" onclick="toggleCardBody('${bodyId}')">
+          <div class="frame-header-left">
+            <span class="tool-toggle-icon">▶</span>
+            <strong>#${f.index}</strong>
+            <span>${escapeHtml(f.title)}</span>
+          </div>
+          <div class="frame-header-right">
+            ${statusBadge}
+            <span class="frame-token-badge">⚡ ${f.est_tokens.toLocaleString()} tokens</span>
+            <span class="dim-text" style="font-size: 12px;">${f.char_count.toLocaleString()} chars</span>
+          </div>
+        </div>
+        <div class="frame-body" id="${bodyId}" style="display: none;">
+          <pre><code>${escapeHtml(f.full_content)}</code></pre>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 // Search sessions in sidebar

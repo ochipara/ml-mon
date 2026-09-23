@@ -81,3 +81,20 @@ gmon plan latest
 # Show plan for a specific conversation
 gmon plan <conversation-id>
 ```
+
+### 5. Inspect Context Window & Usage Stats (`gmon context`)
+Inspects the active LLM context window, compaction boundary, estimated token usage, and message frames:
+```bash
+# Inspect active context window for latest conversation
+gmon context latest
+
+# Inspect for a specific conversation
+gmon context <conversation-id>
+
+# Include older pre-compaction pruned frames
+gmon context latest --all-frames
+
+# Export full context report as JSON
+gmon context latest --json-out
+```
+

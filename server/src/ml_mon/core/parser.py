@@ -10,6 +10,8 @@ from typing import Any, Optional
 
 from ml_mon.config import AntigravityConfig
 from ml_mon.core.models import (
+    ContextFrame,
+    ContextWindowReport,
     ConversationDetail,
     ConversationSummary,
     FileModification,
@@ -20,6 +22,7 @@ from ml_mon.core.models import (
     Thought,
     ToolCall,
     ToolResult,
+    UsageBreakdown,
     UserEnvironment,
 )
 from ml_mon.core.scanner import ConversationScanner
@@ -88,7 +91,7 @@ class ConversationParser:
                     # Extract model from settings change or prompt
                     raw_text = record.get("content", "")
                     if "USER_SETTINGS_CHANGE" in raw_text:
-                        m = re.search(r"Model Selection` from .*? to (.*?)\.", raw_text)
+                        m = re.search(r"Model Selection` from .*? to (.*?)(?:\.\s*No need|\.\s*\n|\.\s*$|\.$)", raw_text)
                         if m:
                             extracted_model_name = m.group(1).strip()
 
@@ -390,3 +393,278 @@ class ConversationParser:
                     )
 
         return artifacts
+
+    def extract_context_window(self, conversation_id: str) -> Optional[ContextWindowReport]:
+        """Extract all message frames, determine active compaction boundaries, and compute usage statistics."""
+        transcript_path = self.config.get_transcript_path(conversation_id)
+        if not transcript_path.exists():
+            return None
+
+        records: list[dict[str, Any]] = []
+        last_checkpoint_step: Optional[int] = None
+        compaction_count = 0
+
+        try:
+            with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        records.append(record)
+                        if record.get("type") == "CHECKPOINT":
+                            compaction_count += 1
+                            last_checkpoint_step = record.get("step_index", 0)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            return None
+
+        active_window_start = last_checkpoint_step if last_checkpoint_step is not None else 0
+        has_compaction = last_checkpoint_step is not None
+
+        frames: list[ContextFrame] = []
+        frame_idx = 0
+
+        for r in records:
+            step_index = r.get("step_index", 0)
+            source = r.get("source", "UNKNOWN")
+            step_type = r.get("type", "UNKNOWN")
+            content = r.get("content") or ""
+            is_active = (last_checkpoint_step is None) or (step_index >= last_checkpoint_step)
+
+            if step_type == "CHECKPOINT":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=step_index,
+                        source=source,
+                        frame_type="CHECKPOINT",
+                        category="compaction_summary",
+                        title=f"⚙️ Checkpoint Compaction (Step {step_index})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=is_active,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "USER_INPUT":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=step_index,
+                        source=source,
+                        frame_type="USER_INPUT",
+                        category="user_prompts",
+                        title=f"👤 User Request & IDE Context (Step {step_index})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=is_active,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "CONVERSATION_HISTORY":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=step_index,
+                        source=source,
+                        frame_type="CONVERSATION_HISTORY",
+                        category="system_history",
+                        title=f"📜 Past Conversation History (Step {step_index})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=is_active,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "KNOWLEDGE_ARTIFACTS":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=step_index,
+                        source=source,
+                        frame_type="KNOWLEDGE_ARTIFACTS",
+                        category="system_history",
+                        title=f"📚 Knowledge Base Items (Step {step_index})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=is_active,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "SYSTEM_MESSAGE":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=step_index,
+                        source=source,
+                        frame_type="SYSTEM_MESSAGE",
+                        category="system_history",
+                        title=f"ℹ️ System Directive (Step {step_index})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=is_active,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "PLANNER_RESPONSE":
+                # Check for thinking
+                thinking = r.get("thinking")
+                if thinking and thinking.strip():
+                    th_text = thinking.strip()
+                    char_count = len(th_text)
+                    preview = th_text[:200] + ("..." if len(th_text) > 200 else "")
+                    frames.append(
+                        ContextFrame(
+                            index=frame_idx,
+                            step_index=step_index,
+                            source=source,
+                            frame_type="COT",
+                            category="cot_reasoning",
+                            title=f"🧠 Chain of Thought (Step {step_index})",
+                            char_count=char_count,
+                            est_tokens=(char_count + 3) // 4,
+                            is_active=is_active,
+                            preview=preview,
+                            full_content=th_text,
+                        )
+                    )
+                    frame_idx += 1
+
+                # Check for tool calls
+                tool_calls = r.get("tool_calls", [])
+                if tool_calls:
+                    tc_text = json.dumps(tool_calls, indent=2)
+                    char_count = len(tc_text)
+                    tool_names = ", ".join(t.get("name", "tool") for t in tool_calls)
+                    preview = f"{len(tool_calls)} call(s): {tool_names}"
+                    frames.append(
+                        ContextFrame(
+                            index=frame_idx,
+                            step_index=step_index,
+                            source=source,
+                            frame_type="TOOL_CALL",
+                            category="tool_outputs",
+                            title=f"🛠️ Tool Invocation: {tool_names} (Step {step_index})",
+                            char_count=char_count,
+                            est_tokens=(char_count + 3) // 4,
+                            is_active=is_active,
+                            preview=preview,
+                            full_content=tc_text,
+                        )
+                    )
+                    frame_idx += 1
+
+                # Check for assistant response text
+                if content and not tool_calls:
+                    char_count = len(content)
+                    preview = content[:200] + ("..." if len(content) > 200 else "")
+                    frames.append(
+                        ContextFrame(
+                            index=frame_idx,
+                            step_index=step_index,
+                            source=source,
+                            frame_type="ASSISTANT",
+                            category="assistant_responses",
+                            title=f"🤖 Assistant Response (Step {step_index})",
+                            char_count=char_count,
+                            est_tokens=(char_count + 3) // 4,
+                            is_active=is_active,
+                            preview=preview,
+                            full_content=content,
+                        )
+                    )
+                    frame_idx += 1
+
+            else:
+                # Tool outputs and other steps
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=step_index,
+                        source=source,
+                        frame_type=step_type,
+                        category="tool_outputs",
+                        title=f"📥 Tool Result: {step_type} (Step {step_index})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=is_active,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+        active_frames = [f for f in frames if f.is_active]
+        total_active_chars = sum(f.char_count for f in active_frames)
+        total_active_tokens = sum(f.est_tokens for f in active_frames)
+        total_session_chars = sum(f.char_count for f in frames)
+        total_session_tokens = sum(f.est_tokens for f in frames)
+
+        # Build usage breakdown for active context
+        categories_def = [
+            ("compaction_summary", "Checkpoint & Compaction"),
+            ("user_prompts", "User Requests & IDE Context"),
+            ("cot_reasoning", "Chain of Thought (CoT)"),
+            ("tool_outputs", "Tool Calls & Results"),
+            ("assistant_responses", "Assistant Responses"),
+            ("system_history", "System History & Memory"),
+        ]
+
+        breakdowns: list[UsageBreakdown] = []
+        for cat_key, cat_label in categories_def:
+            cat_chars = sum(f.char_count for f in active_frames if f.category == cat_key)
+            cat_tokens = sum(f.est_tokens for f in active_frames if f.category == cat_key)
+            pct = round((cat_tokens / total_active_tokens) * 100, 1) if total_active_tokens > 0 else 0.0
+            breakdowns.append(
+                UsageBreakdown(
+                    category=cat_key,
+                    label=cat_label,
+                    char_count=cat_chars,
+                    est_tokens=cat_tokens,
+                    percentage=pct,
+                )
+            )
+
+        return ContextWindowReport(
+            conversation_id=conversation_id,
+            active_window_start_step=active_window_start,
+            has_compaction=has_compaction,
+            compaction_count=compaction_count,
+            total_active_chars=total_active_chars,
+            total_active_tokens=total_active_tokens,
+            total_session_chars=total_session_chars,
+            total_session_tokens=total_session_tokens,
+            breakdown=breakdowns,
+            frames=frames,
+        )
+

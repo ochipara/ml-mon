@@ -12,26 +12,45 @@
 </head>
 <body>
   <div class="app-layout">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <div class="brand">
-          <span class="brand-logo">⚡</span>
-          <span class="brand-name">gmon</span>
-          <span class="badge version">v0.2</span>
-        </div>
-        <div class="search-box">
-          <input type="text" id="session-search" placeholder="Search sessions...">
-        </div>
+    <!-- Top Global App Bar (Replaces left sidebar for full-width workspace) -->
+    <header class="app-top-bar">
+      <div class="app-brand-section">
+        <span class="brand-logo">⚡</span>
+        <span class="brand-name">gmon</span>
+        <span class="badge version">v0.2</span>
       </div>
-      <div class="session-list" id="session-list">
-        <div class="loading-placeholder">Loading sessions...</div>
-      </div>
-    </aside>
 
-    <!-- Main Content Area -->
+      <!-- Quick Session Selector Dropdown & Recent Chips -->
+      <div class="session-selector-section">
+        <div class="session-dropdown-wrapper">
+          <label for="session-dropdown" class="selector-label">Session:</label>
+          <select id="session-dropdown" class="session-dropdown" onchange="selectSession(this.value)">
+            <option value="" disabled selected>Loading sessions...</option>
+          </select>
+        </div>
+
+        <div class="recent-sessions-strip" id="recent-sessions-strip">
+          <!-- Quick switch session pills dynamically rendered -->
+        </div>
+      </div>
+
+      <!-- Live-only & Search Filters -->
+      <div class="app-top-controls">
+        <label class="toggle-control live-toggle" title="Filter to show only currently live sessions">
+          <input type="checkbox" id="toggle-live-only" onchange="filterSessions()">
+          <span class="live-toggle-indicator">●</span>
+          <span>Live Only</span>
+        </label>
+        <div class="search-box compact">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="session-search" placeholder="Search sessions..." oninput="filterSessions()">
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Area (Spans 100% width) -->
     <main class="main-content">
-      <!-- Top Navigation & Stats Bar -->
+      <!-- Active Session Header & Navigation Tabs -->
       <header class="top-nav">
         <div class="session-info">
           <div class="status-indicator">
@@ -50,6 +69,7 @@
           <button class="tab-btn" id="tab-files" onclick="switchTab('files')">📁 Files Touched <span class="tab-counter" id="cnt-files">0</span></button>
           <button class="tab-btn" id="tab-media" onclick="switchTab('media')">🖼️ Media & Logs <span class="tab-counter" id="cnt-media">0</span></button>
           <button class="tab-btn" id="tab-context" onclick="switchTab('context')">📊 IDE Context</button>
+          <button class="tab-btn" id="tab-usage" onclick="switchTab('usage')">🔍 Context & Usage</button>
         </div>
       </header>
 
@@ -80,16 +100,18 @@
             <input type="checkbox" id="toggle-autoscroll" checked>
             <span>⬇️ Auto-scroll</span>
           </label>
+          <button class="action-pill-btn" onclick="scrollToBottom()" title="Jump to the end of all messages">⬇️ End</button>
         </div>
       </div>
 
       <!-- View 1: Timeline & CoT -->
       <section class="tab-view active" id="view-timeline">
-        <div class="timeline-stream" id="timeline-container">
+        <div class="timeline-stream" id="timeline-container" onscroll="handleTimelineScroll()">
           <div class="empty-state">
-            <p>Select a conversation from the sidebar to inspect its timeline and live Chain of Thought.</p>
+            <p>Select a conversation from the top selector to inspect its timeline and live Chain of Thought.</p>
           </div>
         </div>
+        <button class="fab-scroll-bottom" id="fab-scroll-bottom" onclick="scrollToBottom()" title="Jump to End">⬇️</button>
       </section>
 
       <!-- View 2: Live Plan & Walkthrough -->
@@ -175,6 +197,87 @@
                 <p class="dim-text">Computing performance metrics...</p>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 6: Context Window & Token Usage Inspector -->
+      <section class="tab-view" id="view-usage">
+        <div class="usage-view-container">
+          <div class="view-panel-header">
+            <h2>🔍 LLM Context Window & Token Usage Inspector</h2>
+            <p class="dim-text">Inspect the exact message frames, compaction boundaries, and token distribution in the LLM prompt.</p>
+          </div>
+
+          <!-- Top Stats Cards -->
+          <div class="usage-stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">ACTIVE CONTEXT TOKENS</div>
+              <div class="stat-val yellow" id="usage-active-tokens">0</div>
+              <div class="stat-sub dim-text" id="usage-active-chars">0 characters</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">CUMULATIVE SESSION TOKENS</div>
+              <div class="stat-val blue" id="usage-total-tokens">0</div>
+              <div class="stat-sub dim-text" id="usage-total-chars">0 characters</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">COMPACTION STATUS</div>
+              <div class="stat-val green" id="usage-compaction-status">None</div>
+              <div class="stat-sub dim-text" id="usage-active-boundary">Active from Step 0</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">ACTIVE MESSAGE FRAMES</div>
+              <div class="stat-val purple" id="usage-active-frames">0</div>
+              <div class="stat-sub dim-text" id="usage-total-frames">of 0 total session frames</div>
+            </div>
+          </div>
+
+          <!-- Stacked Utilization Progress Bar with Relative vs. Absolute Mode Toggle -->
+          <div class="usage-bar-card">
+            <div class="usage-bar-header">
+              <div class="usage-bar-title-row">
+                <div>
+                  <h3 id="usage-bar-title">Active Context Window Utilization</h3>
+                  <span class="dim-text" id="usage-bar-subtitle">Distribution of active tokens across components</span>
+                </div>
+                <div class="bar-mode-toggle-group">
+                  <button class="mode-btn active" id="btn-mode-relative" onclick="setContextBarMode('relative')">📊 Relative Share (%)</button>
+                  <button class="mode-btn" id="btn-mode-absolute" onclick="setContextBarMode('absolute')">📏 Absolute Capacity</button>
+                  <select id="select-capacity-limit" class="capacity-select" onchange="updateContextCapacityLimit(this.value)" style="display: none;">
+                    <option value="1000000" selected>1,000,000 Tokens (Gemini 1M)</option>
+                    <option value="2000000">2,000,000 Tokens (Gemini 2M)</option>
+                    <option value="200000">200,000 Tokens (Claude 200k)</option>
+                    <option value="128000">128,000 Tokens (GPT-4o 128k)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="stacked-bar" id="usage-stacked-bar">
+              <!-- Dynamically populated segments -->
+            </div>
+            <div class="stacked-legend" id="usage-stacked-legend">
+              <!-- Legend items -->
+            </div>
+          </div>
+
+          <!-- Frame Explorer Controls -->
+          <div class="frames-control-bar">
+            <div class="filter-search" style="width: 320px;">
+              <span class="filter-search-icon">🔍</span>
+              <input type="text" id="frame-search" placeholder="Search context frames..." oninput="filterContextFrames()">
+            </div>
+            <div class="frames-filter-toggles">
+              <label class="toggle-control">
+                <input type="checkbox" id="toggle-active-only" checked onchange="filterContextFrames()">
+                <span>Active Context Only (Post-Compaction)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Frames Accordion List -->
+          <div class="frames-list" id="context-frames-list">
+            <div class="loading-placeholder">Loading context window report...</div>
           </div>
         </div>
       </section>

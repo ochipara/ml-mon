@@ -32,6 +32,9 @@ conda activate ml-mon
 ### 2. Inspect Antigravity Sessions with `gmon`
 
 ```bash
+# Start the real-time web visualizer (dashboard on http://127.0.0.1:8765)
+gmon serve
+
 # List all sessions with live/idle status
 gmon list
 
@@ -44,11 +47,15 @@ gmon cot latest
 # View the implementation plan and walkthrough
 gmon plan latest
 
+# Inspect LLM context window, compaction boundary, and token usage breakdown
+gmon context latest
+
 # Export structured session data as JSON
 gmon show latest --json
 ```
 
 ## Documentation
 
-- [Storage Formats & Schemas](docs/storage_formats.md): Detailed reverse-engineering notes on SQLite WAL databases and JSONL logs.
+- [Storage Formats, Context Assembly & Token Estimation](docs/storage_formats.md): Detailed reverse-engineering notes on SQLite WAL databases, JSONL logs, context window assembly, and token estimation formulas.
 - [CLI Reference](docs/cli_usage.md): Full command and flag reference.
+

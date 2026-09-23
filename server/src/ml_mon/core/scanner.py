@@ -101,6 +101,9 @@ class ConversationScanner:
         # Extract title
         title = self._extract_title(transcript_path, db_path) or f"Session {conversation_id[:8]}"
 
+        # Extract model name
+        model_name = self._extract_model_name(transcript_path, db_path)
+
         # Is active if modified in the last 2 minutes
         is_active = (time.time() - last_mtime) < 120 if last_mtime else False
 
@@ -115,6 +118,7 @@ class ConversationScanner:
             has_walkthrough=walkthrough_path is not None,
             has_sqlite=has_sqlite,
             has_transcript=has_transcript,
+            model_name=model_name,
         )
 
     def _get_step_count(self, db_path: Path, transcript_path: Optional[Path]) -> int:
@@ -167,3 +171,37 @@ class ConversationScanner:
                 pass
 
         return None
+
+    def _extract_model_name(self, transcript_path: Optional[Path], db_path: Path) -> Optional[str]:
+        """Extract the model name from transcript settings or SQLite metadata."""
+        if transcript_path and transcript_path.exists():
+            try:
+                with open(transcript_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for _ in range(15):
+                        line = f.readline()
+                        if not line:
+                            break
+                        if "USER_SETTINGS_CHANGE" in line:
+                            m = re.search(r"Model Selection` from .*? to (.*?)(?:\.\s*No need|\.\s*\n|\.\s*$|\.$)", line)
+                            if m:
+                                return m.group(1).strip()
+            except Exception:
+                pass
+
+        if db_path.exists():
+            try:
+                uri = f"file:{db_path}?mode=ro"
+                with sqlite3.connect(uri, uri=True, timeout=1.0) as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT data FROM gen_metadata WHERE data IS NOT NULL ORDER BY idx DESC LIMIT 5")
+                    for row in cur.fetchall():
+                        data = row[0]
+                        if data:
+                            m = re.search(rb"(Gemini [0-9\.]+[^\x00-\x1f\n\r\"]+|Claude [^\x00-\x1f\n\r\"]+|GPT-[^\x00-\x1f\n\r\"]+)", data)
+                            if m:
+                                return m.group(1).decode("latin1", errors="ignore").strip()
+            except Exception:
+                pass
+
+        return None
+

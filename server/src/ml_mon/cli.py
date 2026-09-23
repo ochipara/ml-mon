@@ -369,6 +369,96 @@ def show_plan(ctx: click.Context, conversation_id: str):
         )
 
 
+@main.command("context")
+@click.argument("conversation_id", default="latest")
+@click.option("--all-frames/--active-only", "all_frames", default=False, help="Show all frames or only active post-compaction context")
+@click.option("--json-out", is_flag=True, help="Export context report as JSON")
+@click.pass_context
+def context_cmd(ctx: click.Context, conversation_id: str, all_frames: bool, json_out: bool):
+    """🔍 Inspect the LLM context window, compaction boundary, and token usage."""
+    scanner: ConversationScanner = ctx.obj["scanner"]
+    parser: ConversationParser = ctx.obj["parser"]
+
+    resolved_id = get_target_id(scanner, conversation_id)
+    if not resolved_id:
+        console.print(f"[bold red]✖ Error:[/bold red] Conversation '{conversation_id}' not found.")
+        sys.exit(1)
+
+    report = parser.extract_context_window(resolved_id)
+    if not report:
+        console.print(f"[bold red]✖ Error:[/bold red] No transcript found for '{resolved_id}'.")
+        sys.exit(1)
+
+    if json_out:
+        print(json.dumps(report.model_dump(), indent=2))
+        return
+
+    compaction_status = (
+        f"[bold yellow]Compacted ({report.compaction_count}x)[/bold yellow] • Active Window from Step {report.active_window_start_step}"
+        if report.has_compaction
+        else "[bold green]Full History (No Compaction)[/bold green]"
+    )
+
+    console.print(
+        Panel(
+            f"  [bold cyan]Conversation ID:[/bold cyan]  {resolved_id}\n"
+            f"  [bold cyan]Active Tokens:[/bold cyan]    [bold yellow]{report.total_active_tokens:,}[/bold yellow] est. tokens ([dim]{report.total_active_chars:,} chars[/dim])\n"
+            f"  [bold cyan]Total Session:[/bold cyan]    {report.total_session_tokens:,} est. tokens ([dim]{report.total_session_chars:,} chars[/dim])\n"
+            f"  [bold cyan]Compaction:[/bold cyan]       {compaction_status}",
+            title="🔍 [bold cyan]LLM Context Window & Usage[/bold cyan]",
+            border_style="cyan",
+            box=box.ROUNDED,
+        )
+    )
+
+    breakdown_table = Table(
+        title="Active Context Window Usage Breakdown",
+        box=box.ROUNDED,
+        border_style="dim",
+        header_style="bold cyan",
+    )
+    breakdown_table.add_column("Category", style="bold")
+    breakdown_table.add_column("Tokens (Est.)", justify="right", style="yellow")
+    breakdown_table.add_column("Characters", justify="right", style="dim")
+    breakdown_table.add_column("Share", justify="right", style="green")
+
+    for b in report.breakdown:
+        if b.est_tokens > 0:
+            breakdown_table.add_row(
+                b.label,
+                f"{b.est_tokens:,}",
+                f"{b.char_count:,}",
+                f"{b.percentage:.1f}%",
+            )
+    console.print(breakdown_table)
+
+    frames_to_show = report.frames if all_frames else [f for f in report.frames if f.is_active]
+    frame_title = f"Context Frames ({len(frames_to_show)} {'total' if all_frames else 'active'})"
+
+    frames_table = Table(
+        title=frame_title,
+        box=box.ROUNDED,
+        border_style="dim",
+        header_style="bold magenta",
+    )
+    frames_table.add_column("#", justify="right", style="dim")
+    frames_table.add_column("Step", justify="right", style="bold")
+    frames_table.add_column("Type", style="cyan")
+    frames_table.add_column("Tokens", justify="right", style="yellow")
+    frames_table.add_column("Preview", style="white")
+
+    for f in frames_to_show:
+        active_mark = "" if f.is_active else " [dim](pruned)[/dim]"
+        frames_table.add_row(
+            str(f.index),
+            str(f.step_index),
+            f"{f.frame_type}{active_mark}",
+            f"{f.est_tokens:,}",
+            f.preview.replace("\n", " ")[:70],
+        )
+    console.print(frames_table)
+
+
 @main.command("serve")
 @click.option("--host", default="127.0.0.1", help="Host interface to bind to (default: 127.0.0.1)")
 @click.option("--port", "-p", default=8765, help="Port to listen on (default: 8765)")

@@ -72,6 +72,20 @@ def create_app(config: Optional[AntigravityConfig] = None) -> FastAPI:
             return {"plan_content": None, "walkthrough_content": None}
         return plan.model_dump()
 
+    @app.get("/api/conversations/{conversation_id}/context")
+    async def get_context_window(conversation_id: str):
+        """Get the full context window frames, compaction boundary, and token usage breakdown."""
+        if conversation_id.lower() == "latest":
+            summaries = scanner.scan_all()
+            if not summaries:
+                raise HTTPException(status_code=404, detail="No conversations found")
+            conversation_id = summaries[0].id
+
+        report = parser.extract_context_window(conversation_id)
+        if not report:
+            raise HTTPException(status_code=404, detail=f"Context for conversation {conversation_id} not found")
+        return report.model_dump()
+
     @app.get("/api/conversations/{conversation_id}/stream")
     async def stream_conversation(conversation_id: str):
         """SSE stream broadcasting real-time step events and plan updates."""
@@ -99,6 +113,8 @@ def create_app(config: Optional[AntigravityConfig] = None) -> FastAPI:
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
+        )
+
     @app.get("/api/artifacts/{conversation_id}/{filename}")
     async def get_artifact(conversation_id: str, filename: str):
         """Serve media file (screenshot, video) from brain directory."""

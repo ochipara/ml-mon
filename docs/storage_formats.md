@@ -94,3 +94,55 @@ Every session has a dedicated SQLite database configured with `PRAGMA journal_mo
   - In `USER_INPUT`: Contains user request wrapped in `<USER_REQUEST>...</USER_REQUEST>` and environment metadata.
   - In tool outputs (`VIEW_FILE`, `RUN_COMMAND`, etc.): The raw stdout or tool execution result.
   - In assistant responses: The user-facing final markdown response.
+  - In `CHECKPOINT`: The compaction summary injected when context limits are reached.
+
+---
+
+## 3. Context Window Assembly & Token Estimation
+
+### How the Context Window is Assembled
+
+On every model invocation, the LLM context window is assembled from the message trajectory:
+
+1. **System & Tool Directives**:
+   - Injected system prompts, agent instructions, rules, and default tool signatures.
+2. **Dynamic IDE State**:
+   - Parsed from `<ADDITIONAL_METADATA>` in `USER_INPUT` steps (active document, cursor line, open tabs, background terminal processes).
+3. **Cross-Session Memory**:
+   - Injected summaries of the 14 most recent conversations (`<conversation_summaries>`) and knowledge items.
+4. **Trajectory & Compaction Boundaries**:
+   - **Uncompacted Sessions**: All turns from `step_index = 0` to the current step remain active in the LLM's context window.
+   - **Compacted Sessions**: When the session exceeds the context budget, Antigravity inserts a `CHECKPOINT` compaction step (`# Resuming from a compaction`). The model's prompt is pruned: all turns prior to the last `CHECKPOINT` are dropped from active memory, and only the compaction summary + subsequent post-compaction turns are sent to the LLM.
+
+### How Token Counts are Computed in `gmon`
+
+Antigravity logs the full text payload of every message frame into `transcript_full.jsonl`, but does not serialize raw BPE token IDs directly into the JSONL keys. `gmon` calculates token metrics using standard Byte-Pair Encoding ratios:
+
+1. **Character Counts**:
+   ```python
+   char_count = len(frame_content)
+   ```
+
+2. **Estimated Token Counts**:
+   Modern LLM tokenizers (Gemini, Claude, GPT-4) average approximately **4 characters per token** for natural language and markdown, and ~3.2 to 4.0 characters per token for code/JSON. `gmon` applies ceiling division:
+   ```python
+   est_tokens = (char_count + 3) // 4  # ceil(char_count / 4.0)
+   ```
+
+3. **Active Context vs. Cumulative Session Tokens**:
+   - **Active Context Tokens**:
+     $$\text{Tokens}_{\text{active}} = \sum_{f \in \text{Frames}_{\ge \text{last\_checkpoint}}} f.\text{est\_tokens}$$
+     Only includes frames currently within the model's active attention window.
+   - **Total Cumulative Session Tokens**:
+     $$\text{Tokens}_{\text{session}} = \sum_{f \in \text{All Frames}} f.\text{est\_tokens}$$
+     Measures all compute and context generated across the entire session lifecycle, including pre-compaction turns.
+
+4. **Component Breakdown**:
+   Frames are aggregated into 6 categories:
+   - **`compaction_summary`**: `# Resuming from a compaction` summaries
+   - **`user_prompts`**: User requests, IDE tabs, cursor position, and background commands
+   - **`cot_reasoning`**: Model's internal Chain of Thought thinking blocks
+   - **`tool_outputs`**: Tool calls (JSON arguments) and execution stdout/stderr results
+   - **`assistant_responses`**: Final markdown responses returned by the model
+   - **`system_history`**: Recent conversation summaries and knowledge items
+

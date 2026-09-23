@@ -145,3 +145,45 @@ class ConversationDetail(BaseModel):
     thoughts: list[Thought] = Field(default_factory=list)
     plan: Optional[PlanAsset] = None
     analytics: Optional[SessionAnalytics] = None
+
+
+class ContextFrame(BaseModel):
+    """A distinct message frame within the LLM context window."""
+
+    index: int
+    step_index: int
+    source: str = "UNKNOWN"
+    frame_type: str = Field(description="USER_INPUT, CHECKPOINT, COT, TOOL_CALL, TOOL_RESULT, ASSISTANT, etc.")
+    category: str = Field(description="compaction_summary, user_prompts, cot_reasoning, tool_outputs, assistant_responses, system_history")
+    title: str
+    char_count: int
+    est_tokens: int
+    is_active: bool = True
+    preview: str
+    full_content: str
+
+
+class UsageBreakdown(BaseModel):
+    """Token and character utilization for a specific component category."""
+
+    category: str
+    label: str
+    char_count: int = 0
+    est_tokens: int = 0
+    percentage: float = 0.0
+
+
+class ContextWindowReport(BaseModel):
+    """Comprehensive report on the LLM's active and historical context window."""
+
+    conversation_id: str
+    active_window_start_step: int = 0
+    has_compaction: bool = False
+    compaction_count: int = 0
+    total_active_chars: int = 0
+    total_active_tokens: int = 0
+    total_session_chars: int = 0
+    total_session_tokens: int = 0
+    breakdown: list[UsageBreakdown] = Field(default_factory=list)
+    frames: list[ContextFrame] = Field(default_factory=list)
+
