@@ -186,3 +186,57 @@ sequenceDiagram
     IDE->>User: 11. Displays formatted markdown response in chat
 ```
 
+---
+
+## 5. Time-Series Evolution & Compaction Sawtooth Analysis
+
+`gmon` analyzes the temporal evolution of tokens throughout an entire session:
+
+### Two Complementary Evolution Metrics
+1. **Active Context Window ($\text{Tokens}_{\text{active}}$)**:
+   - Tracks the exact token load present in Gemini's attention window at step $t$.
+   - **Sawtooth Pattern**: Grows monotonically as tools execute and messages accumulate, until a `CHECKPOINT` compaction step occurs, triggering an instantaneous drop down to the summary baseline token count.
+2. **Total Cumulative Session Tokens ($\text{Tokens}_{\text{cumul}}$)**:
+   - Monotonically increasing sum of all input/output context processed across the conversation lifetime.
+
+### Interactive Stacked Area Vector Chart
+The chart visually breaks down each step into color-coded semantic layers:
+- 🟣 `System Prompt & Guidelines`
+- 🔵 `Tool Parameter Declarations`
+- ⚪ `Compaction Summary Baseline`
+- 🟢 `User Requests & IDE Environment State`
+- 🧠 `Chain of Thought Reasoning`
+- 🛠️ `Tool Call Requests & Execution Outputs`
+- 🤖 `Assistant Messages`
+- 📜 `Conversation History & Knowledge Items`
+
+---
+
+## 6. Point-in-Time Context Window Reconstruction
+
+When inspecting an individual turn (e.g. via the `🌐 Remote` badge in the UI or `GET /api/conversations/{id}/context-at/{step_index}`), `gmon`:
+1. Identifies the active compaction boundary $C \le \text{step\_index}$.
+2. Gathers all active message frames in the range $[C, \text{step\_index}]$.
+3. Extracts static system guidelines and tool schemas active for the session.
+4. Computes token metrics and category percentage distributions.
+5. Reconstructs the exact raw prompt text string sent over the wire to Gemini.
+
+---
+
+## 7. REST API Reference
+
+The `gmon` backend exposes a high-performance REST API:
+
+| Endpoint | Method | Response Type | Description |
+| :--- | :--- | :--- | :--- |
+| `/api/conversations` | `GET` | `list[ConversationSummary]` | List all scanned Antigravity sessions with live/idle indicators. |
+| `/api/conversations/{id}` | `GET` | `ConversationDetail` | Complete chronological trajectory, CoTs, tool records, plan documents, and analytics. |
+| `/api/conversations/{id}/stream` | `GET` | `text/event-stream` (SSE) | Real-time Server-Sent Events broadcasting new steps and file changes as they happen. |
+| `/api/conversations/{id}/context` | `GET` | `ContextWindowReport` | Active context window metrics, compaction boundaries, frames list, and evolution. |
+| `/api/conversations/{id}/context-at/{step}` | `GET` | `StepContextWindowReport` | Point-in-time active context window snapshot and reconstructed prompt text at a specific step. |
+| `/api/conversations/{id}/evolution` | `GET` | `ContextEvolutionReport` | Step-by-step active and cumulative token series with breakdown points. |
+| `/api/conversations/{id}/prompt` | `GET` | `ReconstructedPrompt` | Full prompt reverse-engineered into structured semantic sections and tool parameter schemas. |
+| `/api/conversations/{id}/prompt/raw` | `GET` | `text/plain` | Raw text of the reconstructed prompt (supports `?download=true`). |
+| `/api/artifacts/{id}/{filename}` | `GET` | Binary / Media | Serves session screenshots, webp recordings, and task logs. |
+
+
