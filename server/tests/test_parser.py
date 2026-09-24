@@ -178,3 +178,52 @@ def test_model_name_extraction_with_decimal(tmp_path):
     assert detail.analytics.model_name == "Gemini 3.8 Flash (Medium)"
 
 
+def test_extract_context_at_step(tmp_path):
+    conv_id = "test-step-context"
+    t_dir = tmp_path / "brain" / conv_id / ".system_generated" / "logs"
+    t_dir.mkdir(parents=True)
+    transcript = t_dir / "transcript_full.jsonl"
+
+    lines = [
+        {"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Initial prompt"},
+        {"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "thinking": "First reasoning", "tool_calls": []},
+        {"step_index": 2, "source": "SYSTEM", "type": "CHECKPOINT", "content": "# Resuming from compaction"},
+        {"step_index": 3, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Second prompt"},
+        {"step_index": 4, "source": "MODEL", "type": "PLANNER_RESPONSE", "thinking": "Second reasoning", "tool_calls": [{"name": "run_cmd", "args": {}}]},
+    ]
+
+    with open(transcript, "w") as f:
+        for line in lines:
+            f.write(json.dumps(line) + "\n")
+
+    cfg = AntigravityConfig(
+        base_dir=tmp_path,
+        conversations_dir=tmp_path / "conversations",
+        brain_dir=tmp_path / "brain",
+    )
+    parser = ConversationParser(cfg)
+
+    # Step 1 (before checkpoint): should have steps 0, 1
+    rep_1 = parser.extract_context_at_step(conv_id, 1)
+    assert rep_1 is not None
+    assert rep_1.step_index == 1
+    assert rep_1.active_window_start_step == 0
+    assert len(rep_1.frames) == 2
+
+    # Step 4 (after checkpoint at 2): should only include active steps (2, 3, 4)
+    rep_4 = parser.extract_context_at_step(conv_id, 4)
+    assert rep_4 is not None
+    assert rep_4.step_index == 4
+    assert rep_4.active_window_start_step == 2
+    assert rep_4.is_compacted is True
+    # Frame indices: Checkpoint (step 2), User input (step 3), CoT (step 4), Tool call (step 4)
+    frame_steps = [f.step_index for f in rep_4.frames]
+    assert 0 not in frame_steps
+    assert 1 not in frame_steps
+    assert 2 in frame_steps
+    assert 3 in frame_steps
+    assert 4 in frame_steps
+    assert rep_4.total_active_tokens > 0
+    assert "CONVERSATION TRAJECTORY" in rep_4.full_prompt_text
+
+

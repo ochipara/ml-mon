@@ -83,6 +83,10 @@
         </div>
         <div class="filter-controls">
           <label class="toggle-control">
+            <input type="checkbox" id="toggle-remote" checked onchange="applyFilters()">
+            <span>🌐 Remote</span>
+          </label>
+          <label class="toggle-control">
             <input type="checkbox" id="toggle-cot" checked onchange="applyFilters()">
             <span>🧠 CoT</span>
           </label>
@@ -502,6 +506,81 @@
           <h3>⚡ Context Window Evolution & Compaction</h3>
           <p><strong>Active Window (Sawtooth):</strong> Measures tokens in the LLM's active attention window. Each tool output adds tokens. When the context budget is reached, a <strong>compaction checkpoint</strong> drops older turns, creating a sharp cliff drop back down to the baseline summary.</p>
           <p style="margin-top: 8px;"><strong>Cumulative Session:</strong> Monotonically tracks total context processed across the entire conversation history.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step Context Window & Reconstructed Prompt Modal -->
+  <div class="modal-overlay" id="step-context-modal-overlay" onclick="handleStepModalOverlayClick(event)">
+    <div class="modal-card step-context-modal-card" id="step-context-modal-card">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="brand-logo" style="font-size: 16px;">🌐</span>
+          <h2 id="step-modal-title">Context Window at Step -</h2>
+          <span class="badge model-badge" id="step-modal-model" style="font-size: 11px;">Model: -</span>
+          <span class="tool-badge" id="step-modal-compaction-badge" style="color: var(--accent-yellow); font-weight: 600; display: none;">⚙️ Compacted</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button class="btn-copy-action" onclick="copyStepPromptText()" title="Copy Full Context Prompt Text" id="btn-copy-step-prompt">
+            <span id="copy-step-prompt-icon">📋</span>
+            <span id="copy-step-prompt-text">Copy Prompt</span>
+          </button>
+          <button class="modal-close-btn" onclick="closeStepModal()" title="Close (Esc)">✕</button>
+        </div>
+      </div>
+      
+      <!-- Stats Banner -->
+      <div class="step-modal-stats-bar">
+        <div class="step-stat-item">
+          <span class="step-stat-lbl">TOTAL ACTIVE TOKENS</span>
+          <span class="step-stat-val purple" id="step-stat-tokens">0</span>
+        </div>
+        <div class="step-stat-item">
+          <span class="step-stat-lbl">ACTIVE CHARACTERS</span>
+          <span class="step-stat-val blue" id="step-stat-chars">0</span>
+        </div>
+        <div class="step-stat-item">
+          <span class="step-stat-lbl">ACTIVE FRAMES</span>
+          <span class="step-stat-val green" id="step-stat-frames">0</span>
+        </div>
+        <div class="step-stat-item">
+          <span class="step-stat-lbl">WINDOW START</span>
+          <span class="step-stat-val yellow" id="step-stat-start">Step 0</span>
+        </div>
+      </div>
+
+      <!-- Breakdown Pills Strip -->
+      <div class="step-modal-breakdown-strip" id="step-modal-breakdown-strip">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <!-- View Switcher Tabs (Frames vs Raw Prompt) -->
+      <div class="step-modal-tabs">
+        <div class="tab-group" style="margin: 0;">
+          <button class="tab-btn active" id="btn-step-tab-frames" onclick="switchStepModalTab('frames')">💬 Active Message Frames (<span id="cnt-step-modal-frames">0</span>)</button>
+          <button class="tab-btn" id="btn-step-tab-raw" onclick="switchStepModalTab('raw')">📄 Reconstructed Full Prompt</button>
+        </div>
+        <div class="filter-search" style="width: 260px;" id="step-modal-search-wrapper">
+          <span class="filter-search-icon">🔍</span>
+          <input type="text" id="step-modal-search" placeholder="Filter active frames..." oninput="filterStepModalFrames()">
+        </div>
+      </div>
+
+      <!-- Modal Body Content -->
+      <div class="modal-content step-modal-body" id="step-modal-body-container">
+        <!-- Tab 1: Frames List -->
+        <div class="step-modal-view-panel active" id="step-panel-frames">
+          <div class="step-frames-list" id="step-modal-frames-list">
+            <div class="loading-placeholder">Loading active context window...</div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Raw Reconstructed Prompt -->
+        <div class="step-modal-view-panel" id="step-panel-raw">
+          <div class="step-raw-prompt-view">
+            <pre><code id="step-modal-raw-text">Loading reconstructed prompt...</code></pre>
+          </div>
         </div>
       </div>
     </div>

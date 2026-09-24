@@ -230,3 +230,18 @@ class ContextWindowReport(BaseModel):
     evolution: Optional[ContextEvolutionReport] = None
 
 
+class StepContextWindowReport(BaseModel):
+    """Detailed active context window and reconstructed prompt snapshot at a specific step."""
+
+    conversation_id: str
+    step_index: int
+    model_name: Optional[str] = None
+    active_window_start_step: int = 0
+    is_compacted: bool = False
+    total_active_tokens: int = 0
+    total_active_chars: int = 0
+    system_prompt_tokens: int = 0
+    tool_declarations_tokens: int = 0
+    breakdown: list[UsageBreakdown] = Field(default_factory=list)
+    frames: list[ContextFrame] = Field(default_factory=list)
+    full_prompt_text: str = ""

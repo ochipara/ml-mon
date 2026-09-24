@@ -21,6 +21,7 @@ from ml_mon.core.models import (
     MediaArtifact,
     PlanAsset,
     SessionAnalytics,
+    StepContextWindowReport,
     StepRecord,
     Thought,
     ToolCall,
@@ -853,5 +854,322 @@ class ConversationParser:
             max_cumulative_tokens=max_cumul,
             points=points,
         )
+
+    def extract_context_at_step(self, conversation_id: str, step_index: int) -> Optional[StepContextWindowReport]:
+        """Extract the exact active context window and reconstructed prompt passed to the agent at a specific step."""
+        transcript_path = self.config.get_transcript_path(conversation_id)
+        if not transcript_path.exists():
+            return None
+
+        records: list[dict[str, Any]] = []
+        last_checkpoint_step: Optional[int] = None
+
+        try:
+            with open(transcript_path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        curr_step = record.get("step_index", 0)
+                        if curr_step > step_index:
+                            continue
+                        records.append(record)
+                        if record.get("type") == "CHECKPOINT":
+                            last_checkpoint_step = curr_step
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            return None
+
+        active_window_start = last_checkpoint_step if last_checkpoint_step is not None else 0
+        has_compaction = last_checkpoint_step is not None
+
+        frames: list[ContextFrame] = []
+        frame_idx = 0
+
+        for r in records:
+            s_idx = r.get("step_index", 0)
+            source = r.get("source", "UNKNOWN")
+            step_type = r.get("type", "UNKNOWN")
+            content = r.get("content") or ""
+            is_active = (last_checkpoint_step is None) or (s_idx >= last_checkpoint_step)
+
+            if not is_active:
+                continue
+
+            if step_type == "CHECKPOINT":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=s_idx,
+                        source=source,
+                        frame_type="CHECKPOINT",
+                        category="compaction_summary",
+                        title=f"⚙️ Checkpoint Compaction (Step {s_idx})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=True,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "USER_INPUT":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=s_idx,
+                        source=source,
+                        frame_type="USER_INPUT",
+                        category="user_prompts",
+                        title=f"👤 User Request & IDE Context (Step {s_idx})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=True,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "CONVERSATION_HISTORY":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=s_idx,
+                        source=source,
+                        frame_type="CONVERSATION_HISTORY",
+                        category="system_history",
+                        title=f"📜 Injected Conversation History (Step {s_idx})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=True,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "KNOWLEDGE_ARTIFACTS":
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=s_idx,
+                        source=source,
+                        frame_type="KNOWLEDGE_ARTIFACTS",
+                        category="system_history",
+                        title=f"📚 Injected Knowledge Items (Step {s_idx})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=True,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type in (
+                "RUN_COMMAND",
+                "VIEW_FILE",
+                "WRITE_TO_FILE",
+                "REPLACE_FILE_CONTENT",
+                "MULTI_REPLACE_FILE_CONTENT",
+                "LIST_DIR",
+                "GREP_SEARCH",
+                "SEARCH_WEB",
+                "READ_URL_CONTENT",
+                "BROWSER_SUBAGENT",
+                "ASK_QUESTION",
+            ):
+                char_count = len(content)
+                preview = content[:200] + ("..." if len(content) > 200 else "")
+                frames.append(
+                    ContextFrame(
+                        index=frame_idx,
+                        step_index=s_idx,
+                        source=source,
+                        frame_type=step_type,
+                        category="tool_outputs",
+                        title=f"📥 Tool Execution Output: {step_type} (Step {s_idx})",
+                        char_count=char_count,
+                        est_tokens=(char_count + 3) // 4,
+                        is_active=True,
+                        preview=preview,
+                        full_content=content,
+                    )
+                )
+                frame_idx += 1
+
+            elif step_type == "PLANNER_RESPONSE":
+                thought = r.get("thinking") or ""
+                if thought:
+                    c_len = len(thought)
+                    frames.append(
+                        ContextFrame(
+                            index=frame_idx,
+                            step_index=s_idx,
+                            source=source,
+                            frame_type="PLANNER_RESPONSE",
+                            category="cot_reasoning",
+                            title=f"🧠 Chain of Thought Reasoning (Step {s_idx})",
+                            char_count=c_len,
+                            est_tokens=(c_len + 3) // 4,
+                            is_active=True,
+                            preview=thought[:200] + ("..." if len(thought) > 200 else ""),
+                            full_content=thought,
+                        )
+                    )
+                    frame_idx += 1
+
+                for tc in r.get("tool_calls", []):
+                    tc_json = json.dumps(tc, indent=2)
+                    c_len = len(tc_json)
+                    tc_name = tc.get("name", "tool")
+                    frames.append(
+                        ContextFrame(
+                            index=frame_idx,
+                            step_index=s_idx,
+                            source=source,
+                            frame_type="TOOL_CALL",
+                            category="tool_outputs",
+                            title=f"🛠️ Tool Call Request: {tc_name} (Step {s_idx})",
+                            char_count=c_len,
+                            est_tokens=(c_len + 3) // 4,
+                            is_active=True,
+                            preview=tc_json[:200] + ("..." if len(tc_json) > 200 else ""),
+                            full_content=tc_json,
+                        )
+                    )
+                    frame_idx += 1
+
+                if content and content.strip():
+                    c_len = len(content)
+                    frames.append(
+                        ContextFrame(
+                            index=frame_idx,
+                            step_index=s_idx,
+                            source=source,
+                            frame_type="ASSISTANT_RESPONSE",
+                            category="assistant_responses",
+                            title=f"🤖 Assistant Message (Step {s_idx})",
+                            char_count=c_len,
+                            est_tokens=(c_len + 3) // 4,
+                            is_active=True,
+                            preview=content[:200] + ("..." if len(content) > 200 else ""),
+                            full_content=content,
+                        )
+                    )
+                    frame_idx += 1
+
+        cat_metrics: dict[str, dict[str, int]] = {
+            "compaction_summary": {"chars": 0, "tokens": 0},
+            "user_prompts": {"chars": 0, "tokens": 0},
+            "cot_reasoning": {"chars": 0, "tokens": 0},
+            "tool_outputs": {"chars": 0, "tokens": 0},
+            "assistant_responses": {"chars": 0, "tokens": 0},
+            "system_history": {"chars": 0, "tokens": 0},
+        }
+
+        for f in frames:
+            if f.category in cat_metrics:
+                cat_metrics[f.category]["chars"] += f.char_count
+                cat_metrics[f.category]["tokens"] += f.est_tokens
+
+        from ml_mon.core.prompt_reconstructor import PromptReconstructor
+        reconstructor = PromptReconstructor(self.config)
+        prompt = reconstructor.reconstruct(conversation_id)
+
+        sys_tokens = 0
+        tool_tokens = 0
+        sys_chars = 0
+        tool_chars = 0
+        sys_text = ""
+        tools_text = ""
+
+        if prompt:
+            for sec in prompt.sections:
+                if sec.category in ("system_instruction", "skills_plugins"):
+                    sys_tokens += sec.est_tokens
+                    sys_chars += sec.char_count
+                    sys_text += sec.content + "\n\n"
+            for t in prompt.tools:
+                tool_tokens += t.est_tokens
+                tool_chars += t.char_count
+                tools_text += f"# Tool: {t.name}\n{t.description}\n\n"
+
+        total_active_tokens = sys_tokens + tool_tokens + sum(m["tokens"] for m in cat_metrics.values())
+        total_active_chars = sys_chars + tool_chars + sum(m["chars"] for m in cat_metrics.values())
+
+        cat_labels = {
+            "compaction_summary": "⚙️ Compaction Summary",
+            "user_prompts": "👤 User Requests & IDE State",
+            "cot_reasoning": "🧠 Chain of Thought",
+            "tool_outputs": "🛠️ Tool Calls & Results",
+            "assistant_responses": "🤖 Assistant Responses",
+            "system_history": "📜 Conversation History & KIs",
+        }
+
+        breakdown: list[UsageBreakdown] = []
+        if sys_tokens > 0:
+            pct = (sys_tokens / total_active_tokens * 100) if total_active_tokens else 0.0
+            breakdown.append(UsageBreakdown(category="system_instruction", label="🧠 System Prompt & Guidelines", char_count=sys_chars, est_tokens=sys_tokens, percentage=round(pct, 1)))
+        if tool_tokens > 0:
+            pct = (tool_tokens / total_active_tokens * 100) if total_active_tokens else 0.0
+            breakdown.append(UsageBreakdown(category="tool_declarations", label="🛠️ Tool Declarations", char_count=tool_chars, est_tokens=tool_tokens, percentage=round(pct, 1)))
+
+        for cat_key, label in cat_labels.items():
+            tokens = cat_metrics[cat_key]["tokens"]
+            chars = cat_metrics[cat_key]["chars"]
+            pct = (tokens / total_active_tokens * 100) if total_active_tokens else 0.0
+            breakdown.append(
+                UsageBreakdown(
+                    category=cat_key,
+                    label=label,
+                    char_count=chars,
+                    est_tokens=tokens,
+                    percentage=round(pct, 1),
+                )
+            )
+
+        prompt_parts: list[str] = []
+        if sys_text.strip():
+            prompt_parts.append(f"# SYSTEM INSTRUCTION\n{sys_text.strip()}")
+        if tools_text.strip():
+            prompt_parts.append(f"# AVAILABLE TOOLS\n{tools_text.strip()}")
+        prompt_parts.append(f"# CONVERSATION TRAJECTORY (Step {active_window_start} to {step_index})")
+        for f in frames:
+            prompt_parts.append(f"--- Frame [{f.category.upper()}] (Step {f.step_index}) ---\n{f.full_content}\n")
+
+        full_prompt_text = "\n\n".join(prompt_parts)
+
+        summary = self.scanner.get_summary(conversation_id)
+        model_name = summary.model_name if summary else None
+
+        return StepContextWindowReport(
+            conversation_id=conversation_id,
+            step_index=step_index,
+            model_name=model_name,
+            active_window_start_step=active_window_start,
+            is_compacted=has_compaction,
+            total_active_tokens=total_active_tokens,
+            total_active_chars=total_active_chars,
+            system_prompt_tokens=sys_tokens,
+            tool_declarations_tokens=tool_tokens,
+            breakdown=breakdown,
+            frames=frames,
+            full_prompt_text=full_prompt_text,
+        )
+
 
 

@@ -272,7 +272,7 @@ function appendStepToTimeline(step, shouldScroll) {
     const cpText = step.raw_content || step.user_prompt || "Session compacted / state checkpointed.";
     const estSummaryTokens = Math.ceil(cpText.length / 4);
     cards.push(`
-      <div class="timeline-card card-checkpoint step-checkpoint" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(cpText.toLowerCase())}">
+      <div class="timeline-card card-checkpoint step-checkpoint" data-type="checkpoint" data-is-remote="false" data-is-error="false" data-search="${escapeHtml(cpText.toLowerCase())}">
         <div class="card-header">
           <span>⚙️ <strong>System Checkpoint / Compaction</strong></span>
           <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
@@ -295,7 +295,7 @@ function appendStepToTimeline(step, shouldScroll) {
     const histText = step.raw_content || "No past conversations.";
     const bodyId = `sys-body-${step.step_index}`;
     cards.push(`
-      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(histText.toLowerCase())}">
+      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-remote="false" data-is-error="false" data-search="${escapeHtml(histText.toLowerCase())}">
         <div class="card-header clickable" onclick="toggleCardBody('${bodyId}')">
           <span>
             <span class="tool-toggle-icon">▶</span>
@@ -313,7 +313,7 @@ function appendStepToTimeline(step, shouldScroll) {
     const bodyId = `sys-body-${step.step_index}`;
     const badgeText = step.raw_content ? "" : '<span class="dim-text" style="font-size: 12px; margin-left: 8px;">(0 matched items)</span>';
     cards.push(`
-      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(kiText.toLowerCase())}">
+      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-remote="false" data-is-error="false" data-search="${escapeHtml(kiText.toLowerCase())}">
         <div class="card-header clickable" onclick="toggleCardBody('${bodyId}')">
           <span>
             <span class="tool-toggle-icon">▶</span>
@@ -330,7 +330,7 @@ function appendStepToTimeline(step, shouldScroll) {
     const sysMsg = step.raw_content || "";
     const bodyId = `sys-body-${step.step_index}`;
     cards.push(`
-      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(sysMsg.toLowerCase())}">
+      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-remote="false" data-is-error="false" data-search="${escapeHtml(sysMsg.toLowerCase())}">
         <div class="card-header clickable" onclick="toggleCardBody('${bodyId}')">
           <span>
             <span class="tool-toggle-icon">▶</span>
@@ -346,7 +346,7 @@ function appendStepToTimeline(step, shouldScroll) {
   } else if (step.step_type === "USER_SETTINGS_CHANGE") {
     const setMsg = step.raw_content || "";
     cards.push(`
-      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(setMsg.toLowerCase())}">
+      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-remote="false" data-is-error="false" data-search="${escapeHtml(setMsg.toLowerCase())}">
         <div class="card-header">
           <span>⚙️ <strong>User Settings Change</strong></span>
           <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
@@ -361,7 +361,7 @@ function appendStepToTimeline(step, shouldScroll) {
   // 1. User Request
   if (step.user_prompt) {
     cards.push(`
-      <div class="timeline-card card-user step-user" data-type="user" data-is-error="false" data-search="${escapeHtml(step.user_prompt.toLowerCase())}">
+      <div class="timeline-card card-user step-user" data-type="user" data-is-remote="false" data-is-error="false" data-search="${escapeHtml(step.user_prompt.toLowerCase())}">
         <div class="card-header">
           <span>👤 <strong>User Request</strong></span>
           <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
@@ -379,11 +379,11 @@ function appendStepToTimeline(step, shouldScroll) {
       ? `<span class="cot-duration">⏱️ ${step.thought.duration_seconds.toFixed(1)}s</span>`
       : "";
     cards.push(`
-      <div class="timeline-card card-cot step-cot" data-type="cot" data-is-error="false" data-search="${escapeHtml(step.thought.content.toLowerCase())}">
+      <div class="timeline-card card-cot step-cot" data-type="cot" data-is-remote="true" data-is-error="false" data-search="${escapeHtml(step.thought.content.toLowerCase())}">
         <div class="card-header clickable" onclick="toggleCardBody('cot-body-${step.step_index}')">
           <span>🧠 <strong>Chain of Thought</strong></span>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="badge-remote" title="Generated by Remote LLM (Gemini API)">🌐 Remote</span>
+            <span class="badge-remote clickable-badge" onclick="event.stopPropagation(); inspectContextAtStep(${step.step_index})" title="Click to view full context window passed to agent at Step ${step.step_index}">🌐 Remote</span>
             ${durationText}
             <span class="cot-badge">${step.thought.content.length.toLocaleString()} chars</span>
             <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
@@ -405,14 +405,14 @@ function appendStepToTimeline(step, shouldScroll) {
       const searchContent = `${tc.name} ${tc.summary || ''} ${JSON.stringify(tc.args)}`.toLowerCase();
 
       cards.push(`
-        <div class="timeline-card card-tool step-tool" data-type="tool" data-is-error="false" data-search="${escapeHtml(searchContent)}">
+        <div class="timeline-card card-tool step-tool" data-type="tool" data-is-remote="true" data-is-error="false" data-search="${escapeHtml(searchContent)}">
           <div class="card-header clickable" onclick="toggleCardBody('${bodyId}')">
             <span>
               <span class="tool-toggle-icon">▶</span>
               🛠️ <strong>Tool Call:</strong> <code>${escapeHtml(tc.name)}</code>${summaryText}
             </span>
             <div style="display: flex; align-items: center; gap: 8px;">
-              <span class="badge-remote" title="Proposed by Remote LLM (Gemini API)">🌐 Remote</span>
+              <span class="badge-remote clickable-badge" onclick="event.stopPropagation(); inspectContextAtStep(${step.step_index})" title="Click to view full context window passed to agent at Step ${step.step_index}">🌐 Remote</span>
               <span class="tool-badge">Step ${step.step_index}</span>
             </div>
           </div>
@@ -437,7 +437,7 @@ function appendStepToTimeline(step, shouldScroll) {
     const searchContent = `${step.tool_result.tool_name} ${step.tool_result.content}`.toLowerCase();
 
     cards.push(`
-      <div class="timeline-card card-tool step-tool ${errorClass}" data-type="tool" data-is-error="${isError}" data-search="${escapeHtml(searchContent)}">
+      <div class="timeline-card card-tool step-tool ${errorClass}" data-type="tool" data-is-remote="false" data-is-error="${isError}" data-search="${escapeHtml(searchContent)}">
         <div class="card-header clickable" onclick="toggleCardBody('${bodyId}')">
           <span>
             <span class="tool-toggle-icon">▶</span>
@@ -457,11 +457,11 @@ function appendStepToTimeline(step, shouldScroll) {
   // 5. Assistant Response
   if (step.model_response) {
     cards.push(`
-      <div class="timeline-card card-assistant step-assistant" data-type="assistant" data-is-error="false" data-search="${escapeHtml(step.model_response.toLowerCase())}">
+      <div class="timeline-card card-assistant step-assistant" data-type="assistant" data-is-remote="true" data-is-error="false" data-search="${escapeHtml(step.model_response.toLowerCase())}">
         <div class="card-header">
           <span>🤖 <strong>Assistant Response</strong></span>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="badge-remote" title="Generated by Remote LLM (Gemini API)">🌐 Remote</span>
+            <span class="badge-remote clickable-badge" onclick="event.stopPropagation(); inspectContextAtStep(${step.step_index})" title="Click to view full context window passed to agent at Step ${step.step_index}">🌐 Remote</span>
             <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
           </div>
         </div>
@@ -680,6 +680,7 @@ function renderContextTab(detail) {
 function applyFilters() {
   const searchInput = document.getElementById("timeline-search");
   const query = searchInput ? searchInput.value.toLowerCase().trim() : "";
+  const showRemote = document.getElementById("toggle-remote") ? document.getElementById("toggle-remote").checked : true;
   const showCoT = document.getElementById("toggle-cot") ? document.getElementById("toggle-cot").checked : true;
   const showTools = document.getElementById("toggle-tools") ? document.getElementById("toggle-tools").checked : true;
   const showCheckpoints = document.getElementById("toggle-checkpoints") ? document.getElementById("toggle-checkpoints").checked : true;
@@ -689,6 +690,7 @@ function applyFilters() {
 
   cards.forEach(card => {
     const cardType = card.getAttribute("data-type");
+    const isRemote = card.getAttribute("data-is-remote") === "true";
     const isError = card.getAttribute("data-is-error") === "true";
     const searchContent = card.getAttribute("data-search") || "";
 
@@ -696,6 +698,11 @@ function applyFilters() {
 
     // Filter by Errors Only
     if (showErrorsOnly && !isError) {
+      visible = false;
+    }
+
+    // Filter by Remote toggle
+    if (visible && !showRemote && isRemote) {
       visible = false;
     }
 
@@ -1565,8 +1572,178 @@ function handleModalOverlayClick(event) {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeHelpModal();
+    closeStepModal();
   }
 });
+
+// Step Context Window Modal Logic
+let currentStepContextReport = null;
+
+async function inspectContextAtStep(stepIndex) {
+  if (!activeSessionId) return;
+  const overlay = document.getElementById("step-context-modal-overlay");
+  if (!overlay) return;
+
+  // Open modal in loading state
+  overlay.classList.add("active");
+  document.getElementById("step-modal-title").innerText = `Context Window at Step ${stepIndex}`;
+  document.getElementById("step-modal-model").innerText = "Loading...";
+  document.getElementById("step-modal-compaction-badge").style.display = "none";
+  document.getElementById("step-stat-tokens").innerText = "Loading...";
+  document.getElementById("step-stat-chars").innerText = "Loading...";
+  document.getElementById("step-stat-frames").innerText = "Loading...";
+  document.getElementById("step-stat-start").innerText = "Loading...";
+  document.getElementById("step-modal-breakdown-strip").innerHTML = "";
+  document.getElementById("step-modal-frames-list").innerHTML = '<div class="loading-placeholder">Loading active context window snapshot...</div>';
+  document.getElementById("step-modal-raw-text").innerText = "Loading reconstructed prompt...";
+  switchStepModalTab('frames');
+
+  try {
+    const res = await fetch(`/api/conversations/${activeSessionId}/context-at/${stepIndex}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    currentStepContextReport = data;
+
+    // Render Stats
+    document.getElementById("step-modal-title").innerText = `Active Context Window at Step ${data.step_index}`;
+    document.getElementById("step-modal-model").innerText = data.model_name ? `Model: ${data.model_name}` : "Model: -";
+    const cpBadge = document.getElementById("step-modal-compaction-badge");
+    if (data.is_compacted) {
+      cpBadge.style.display = "inline-block";
+      cpBadge.innerText = `⚙️ Compacted (Boundary: Step ${data.active_window_start_step})`;
+    } else {
+      cpBadge.style.display = "none";
+    }
+
+    document.getElementById("step-stat-tokens").innerText = data.total_active_tokens.toLocaleString();
+    document.getElementById("step-stat-chars").innerText = data.total_active_chars.toLocaleString();
+    document.getElementById("step-stat-frames").innerText = data.frames.length.toLocaleString();
+    document.getElementById("step-stat-start").innerText = `Step ${data.active_window_start_step}`;
+    document.getElementById("cnt-step-modal-frames").innerText = data.frames.length;
+
+    // Render Breakdown Pills
+    const breakdownStrip = document.getElementById("step-modal-breakdown-strip");
+    const pillsHtml = (data.breakdown || []).map(b => `
+      <div class="step-breakdown-pill" title="${escapeHtml(b.label)}: ${b.est_tokens.toLocaleString()} tokens (${b.percentage}%)">
+        <span>${escapeHtml(b.label)}:</span>
+        <strong>${b.est_tokens.toLocaleString()} tok</strong>
+        <span class="dim-text" style="font-size: 11px;">(${b.percentage}%)</span>
+      </div>
+    `).join("");
+    breakdownStrip.innerHTML = pillsHtml || '<span class="dim-text">No category breakdown available</span>';
+
+    // Render Active Frames List
+    renderStepModalFrames(data.frames);
+
+    // Render Raw Reconstructed Prompt
+    document.getElementById("step-modal-raw-text").innerText = data.full_prompt_text || "No prompt text reconstructed.";
+
+  } catch (err) {
+    document.getElementById("step-modal-frames-list").innerHTML = `<div class="empty-state" style="color: var(--accent-red);">Failed to load context at step ${stepIndex}: ${escapeHtml(err.message)}</div>`;
+    document.getElementById("step-modal-raw-text").innerText = `Error: ${err.message}`;
+  }
+}
+
+function renderStepModalFrames(frames) {
+  const container = document.getElementById("step-modal-frames-list");
+  if (!frames || !frames.length) {
+    container.innerHTML = '<div class="empty-state">No active message frames found in context window for this step.</div>';
+    return;
+  }
+
+  const searchEl = document.getElementById("step-modal-search");
+  const query = searchEl ? searchEl.value.toLowerCase().trim() : "";
+
+  const cardsHtml = frames.map((f, i) => {
+    const isMatched = !query || f.title.toLowerCase().includes(query) || f.full_content.toLowerCase().includes(query);
+    if (!isMatched) return "";
+
+    const bodyId = `step-frame-body-${i}`;
+    return `
+      <div class="step-frame-card" data-category="${escapeHtml(f.category)}">
+        <div class="step-frame-header" onclick="toggleStepFrame('${bodyId}')">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="tool-toggle-icon">▶</span>
+            <strong>${escapeHtml(f.title)}</strong>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="tool-badge">${f.est_tokens.toLocaleString()} tokens</span>
+            <span class="tool-badge" style="color: var(--text-dim);">${f.char_count.toLocaleString()} chars</span>
+          </div>
+        </div>
+        <div class="step-frame-body markdown-body" id="${bodyId}" style="display: none;">
+          ${renderMarkdown(f.full_content)}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  container.innerHTML = cardsHtml || '<div class="empty-state">No frames matching search.</div>';
+}
+
+function toggleStepFrame(bodyId) {
+  const el = document.getElementById(bodyId);
+  if (!el) return;
+  const isHidden = el.style.display === "none";
+  el.style.display = isHidden ? "block" : "none";
+  const parent = el.closest(".step-frame-card");
+  if (parent) {
+    const icon = parent.querySelector(".tool-toggle-icon");
+    if (icon) icon.innerText = isHidden ? "▼" : "▶";
+  }
+}
+
+function filterStepModalFrames() {
+  if (!currentStepContextReport) return;
+  renderStepModalFrames(currentStepContextReport.frames);
+}
+
+function switchStepModalTab(tab) {
+  const btnFrames = document.getElementById("btn-step-tab-frames");
+  const btnRaw = document.getElementById("btn-step-tab-raw");
+  const panelFrames = document.getElementById("step-panel-frames");
+  const panelRaw = document.getElementById("step-panel-raw");
+  const searchWrap = document.getElementById("step-modal-search-wrapper");
+
+  if (tab === "frames") {
+    if (btnFrames) btnFrames.classList.add("active");
+    if (btnRaw) btnRaw.classList.remove("active");
+    if (panelFrames) panelFrames.classList.add("active");
+    if (panelRaw) panelRaw.classList.remove("active");
+    if (searchWrap) searchWrap.style.display = "flex";
+  } else {
+    if (btnFrames) btnFrames.classList.remove("active");
+    if (btnRaw) btnRaw.classList.add("active");
+    if (panelFrames) panelFrames.classList.remove("active");
+    if (panelRaw) panelRaw.classList.add("active");
+    if (searchWrap) searchWrap.style.display = "none";
+  }
+}
+
+function copyStepPromptText() {
+  if (!currentStepContextReport || !currentStepContextReport.full_prompt_text) return;
+  const textEl = document.getElementById("copy-step-prompt-text");
+  const iconEl = document.getElementById("copy-step-prompt-icon");
+  navigator.clipboard.writeText(currentStepContextReport.full_prompt_text).then(() => {
+    if (textEl) textEl.innerText = "Copied!";
+    if (iconEl) iconEl.innerText = "✓";
+    setTimeout(() => {
+      if (textEl) textEl.innerText = "Copy Prompt";
+      if (iconEl) iconEl.innerText = "📋";
+    }, 2000);
+  });
+}
+
+function closeStepModal() {
+  const overlay = document.getElementById("step-context-modal-overlay");
+  if (overlay) overlay.classList.remove("active");
+}
+
+function handleStepModalOverlayClick(event) {
+  if (event.target && event.target.id === "step-context-modal-overlay") {
+    closeStepModal();
+  }
+}
 
 // Search sessions in sidebar
 document.getElementById("session-search").addEventListener("input", (e) => {
