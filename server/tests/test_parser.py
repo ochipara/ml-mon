@@ -135,6 +135,16 @@ def test_extract_context_window(tmp_path):
     assert "cot_reasoning" in categories
     assert "tool_outputs" in categories
 
+    # Verify context evolution time-series
+    assert report.evolution is not None
+    assert report.evolution.conversation_id == conv_id
+    assert report.evolution.checkpoints == [2]
+    assert len(report.evolution.points) == 6
+    p_ckpt = [p for p in report.evolution.points if p.is_checkpoint][0]
+    assert p_ckpt.step_index == 2
+    assert p_ckpt.breakdown.compaction_summary > 0
+    assert report.evolution.max_active_tokens > 0
+
 
 def test_model_name_extraction_with_decimal(tmp_path):
     conv_id = "test-model-conv"

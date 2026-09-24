@@ -739,7 +739,10 @@ async function loadContextWindow(sessionId) {
     // 2. Stacked Utilization Progress Bar
     renderStackedUsageBar();
 
-    // 3. Render Frames
+    // 3. Step-by-Step Prompt & Context Evolution Chart
+    renderEvolutionChart();
+
+    // 4. Render Frames
     filterContextFrames();
   } catch (err) {
     listEl.innerHTML = `<div class="empty-state">Failed to load context report: ${escapeHtml(err.message)}</div>`;
@@ -854,6 +857,307 @@ function renderStackedUsageBar() {
   barEl.innerHTML = segments.join("");
   legendEl.innerHTML = legends.join("");
 }
+
+let evolutionChartMode = "active";
+
+function setEvolutionChartMode(mode) {
+  evolutionChartMode = mode;
+  const btnActive = document.getElementById("btn-chart-active");
+  const btnCumul = document.getElementById("btn-chart-cumulative");
+  const subtitle = document.getElementById("evolution-chart-subtitle");
+
+  if (mode === "active") {
+    btnActive?.classList.add("active");
+    btnCumul?.classList.remove("active");
+    if (subtitle) {
+      subtitle.innerText = "Step-by-step active prompt window showing tool spikes, CoT growth, and compaction cliff drops";
+    }
+  } else {
+    btnActive?.classList.remove("active");
+    btnCumul?.classList.add("active");
+    if (subtitle) {
+      subtitle.innerText = "Cumulative total token consumption and session history across all interactions";
+    }
+  }
+
+  renderEvolutionChart();
+}
+
+function renderEvolutionChart() {
+  const container = document.getElementById("evolution-chart-container");
+  const svg = document.getElementById("evolution-svg");
+  const legendEl = document.getElementById("evolution-legend");
+  const statsEl = document.getElementById("evolution-stats-summary");
+
+  if (!svg || !currentContextReport?.evolution) {
+    if (svg) svg.innerHTML = '<text x="500" y="160" fill="#64748b" text-anchor="middle" font-size="14">No evolution data available</text>';
+    return;
+  }
+
+  const evo = currentContextReport.evolution;
+  const points = evo.points;
+  if (!points || points.length === 0) {
+    svg.innerHTML = '<text x="500" y="160" fill="#64748b" text-anchor="middle" font-size="14">No step points recorded</text>';
+    return;
+  }
+
+  const svgWidth = 1000;
+  const svgHeight = 320;
+  const padL = 65;
+  const padR = 25;
+  const padT = 25;
+  const padB = 35;
+  const plotW = svgWidth - padL - padR;
+  const plotH = svgHeight - padT - padB;
+
+  const yMax = evolutionChartMode === "active"
+    ? Math.max(10000, Math.ceil((evo.max_active_tokens * 1.1) / 10000) * 10000)
+    : Math.max(10000, Math.ceil((evo.max_cumulative_tokens * 1.05) / 10000) * 10000);
+
+  const N = points.length;
+  const getX = (idx) => padL + (idx / Math.max(1, N - 1)) * plotW;
+  const getY = (val) => padT + plotH - (Math.max(0, val) / yMax) * plotH;
+
+  // Categories in stacking order (bottom to top)
+  const catOrder = [
+    { key: "system_instruction", color: "#ec4899", label: "System Persona & Skills" },
+    { key: "tool_declarations", color: "#8b5cf6", label: "Tool Schemas" },
+    { key: "compaction_summary", color: "#9ca3af", label: "Compaction Memory" },
+    { key: "user_prompts", color: "#10b981", label: "User Requests" },
+    { key: "cot_reasoning", color: "#a855f7", label: "CoT Reasoning" },
+    { key: "tool_outputs", color: "#f59e0b", label: "Tool Outputs & Diffs" },
+    { key: "assistant_responses", color: "#06b6d4", label: "Assistant Responses" },
+    { key: "system_history", color: "#3b82f6", label: "System History" },
+  ];
+
+  let svgElements = [];
+
+  // 1. Background Grid & Token Y-Axis Labels
+  const gridTicks = 4;
+  for (let g = 0; g <= gridTicks; g++) {
+    const val = Math.round((yMax / gridTicks) * g);
+    const yPos = getY(val);
+    const label = val >= 1000 ? `${Math.round(val / 1000)}k` : `${val}`;
+    svgElements.push(`
+      <line x1="${padL}" y1="${yPos}" x2="${padL + plotW}" y2="${yPos}" stroke="rgba(255, 255, 255, 0.07)" stroke-dasharray="3,3" />
+      <text x="${padL - 10}" y="${yPos + 4}" fill="#64748b" font-size="11" font-family="monospace" text-anchor="end">${label}</text>
+    `);
+  }
+
+  // 2. Generate Stacked Area Layers
+  if (evolutionChartMode === "active") {
+    let baselineY = new Array(N).fill(0);
+
+    for (const cat of catOrder) {
+      const topPoints = [];
+      const bottomPoints = [];
+      let catHasValues = false;
+
+      for (let i = 0; i < N; i++) {
+        const p = points[i];
+        const val = p.breakdown?.[cat.key] || 0;
+        if (val > 0) catHasValues = true;
+
+        const bY = baselineY[i];
+        const tY = bY + val;
+
+        const px = getX(i);
+        const pyTop = getY(tY);
+        const pyBottom = getY(bY);
+
+        topPoints.push(`${px.toFixed(1)},${pyTop.toFixed(1)}`);
+        bottomPoints.unshift(`${px.toFixed(1)},${pyBottom.toFixed(1)}`);
+
+        baselineY[i] = tY;
+      }
+
+      if (catHasValues) {
+        const polyPoints = [...topPoints, ...bottomPoints].join(" ");
+        svgElements.push(`
+          <polygon points="${polyPoints}" fill="${cat.color}" fill-opacity="0.82" />
+        `);
+      }
+    }
+
+    // Top contour stroke
+    const contourPoints = points.map((p, i) => `${getX(i).toFixed(1)},${getY(p.active_tokens).toFixed(1)}`).join(" ");
+    svgElements.push(`
+      <polyline points="${contourPoints}" fill="none" stroke="rgba(255, 255, 255, 0.95)" stroke-width="1.8" />
+    `);
+  } else {
+    // Cumulative Mode: Single smooth cumulative area
+    const polyPoints = [];
+    polyPoints.push(`${padL},${padT + plotH}`);
+    for (let i = 0; i < N; i++) {
+      polyPoints.push(`${getX(i).toFixed(1)},${getY(points[i].cumulative_tokens).toFixed(1)}`);
+    }
+    polyPoints.push(`${(padL + plotW).toFixed(1)},${padT + plotH}`);
+
+    svgElements.push(`
+      <polygon points="${polyPoints.join(" ")}" fill="url(#cumul-gradient)" fill-opacity="0.8" />
+      <polyline points="${points.map((p, i) => `${getX(i).toFixed(1)},${getY(p.cumulative_tokens).toFixed(1)}`).join(" ")}" fill="none" stroke="#38bdf8" stroke-width="2" />
+    `);
+  }
+
+  // 3. Compaction Checkpoint Markers
+  if (evo.checkpoints && evo.checkpoints.length > 0) {
+    for (const ckptStep of evo.checkpoints) {
+      const idx = points.findIndex(p => p.step_index === ckptStep);
+      if (idx !== -1) {
+        const cx = getX(idx);
+        const p = points[idx];
+        const cy = getY(p.active_tokens);
+        svgElements.push(`
+          <line x1="${cx}" y1="${padT}" x2="${cx}" y2="${padT + plotH}" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3" />
+          <circle cx="${cx}" cy="${cy}" r="4" fill="#f59e0b" stroke="#ffffff" stroke-width="1.5" />
+          <text x="${cx}" y="${padT - 6}" fill="#f59e0b" font-size="10" font-weight="600" text-anchor="middle">⚙️ Step ${ckptStep}</text>
+        `);
+      }
+    }
+  }
+
+  // 4. X-Axis Step Labels
+  const xTicks = 5;
+  for (let k = 0; k <= xTicks; k++) {
+    const idx = Math.min(N - 1, Math.round((k / xTicks) * (N - 1)));
+    const stepVal = points[idx].step_index;
+    const xPos = getX(idx);
+    svgElements.push(`
+      <text x="${xPos}" y="${padT + plotH + 18}" fill="#64748b" font-size="11" font-family="monospace" text-anchor="middle">Step ${stepVal}</text>
+    `);
+  }
+
+  // Gradient definition
+  const defs = `
+    <defs>
+      <linearGradient id="cumul-gradient" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.85"/>
+        <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.2"/>
+      </linearGradient>
+    </defs>
+  `;
+
+  svg.innerHTML = defs + svgElements.join("");
+
+  // 5. Render Legend
+  if (legendEl) {
+    legendEl.innerHTML = catOrder.map(c => `
+      <div class="legend-item">
+        <span class="legend-dot" style="background-color: ${c.color};"></span>
+        <span>${escapeHtml(c.label)}</span>
+      </div>
+    `).join("");
+  }
+
+  // 6. Summary Stats in Footer
+  if (statsEl) {
+    const lastP = points[points.length - 1];
+    statsEl.innerHTML = `
+      <span class="evolution-stat-pill"><strong>Peak Active:</strong> ${evo.max_active_tokens.toLocaleString()} tokens</span>
+      <span class="evolution-stat-pill"><strong>Current Active:</strong> ${lastP.active_tokens.toLocaleString()} tokens</span>
+      <span class="evolution-stat-pill"><strong>Compactions:</strong> ${evo.checkpoints.length} cliff drops</span>
+      <span class="evolution-stat-pill"><strong>Total Turns:</strong> ${evo.total_steps} steps</span>
+    `;
+  }
+
+  // 7. Interactive Scrubber & Tooltip Listeners
+  if (container && !container._hasScrubberListeners) {
+    container._hasScrubberListeners = true;
+
+    container.addEventListener("mousemove", (e) => {
+      const rep = currentContextReport?.evolution;
+      if (!rep || !rep.points || rep.points.length === 0) return;
+      const pts = rep.points;
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+
+      const pW = (plotW / svgWidth) * rect.width;
+      const pL = (padL / svgWidth) * rect.width;
+
+      const ratio = Math.max(0, Math.min(1, (mouseX - pL) / pW));
+      const idx = Math.min(pts.length - 1, Math.max(0, Math.round(ratio * (pts.length - 1))));
+      const pt = pts[idx];
+
+      const scrubberEl = document.getElementById("evolution-scrubber-line");
+      const tooltipEl = document.getElementById("evolution-tooltip");
+      if (scrubberEl) {
+        scrubberEl.style.left = `${mouseX}px`;
+        scrubberEl.style.display = "block";
+      }
+
+      if (tooltipEl) {
+        const isCkpt = pt.is_checkpoint ? ' <span style="color: #f59e0b; font-weight: bold;">(⚙️ Compaction Cliff)</span>' : '';
+        const deltaFormatted = pt.delta_tokens > 0 ? `+${pt.delta_tokens.toLocaleString()}` : `${pt.delta_tokens.toLocaleString()}`;
+
+        const bd = pt.breakdown || {};
+        const breakdownLines = catOrder
+          .filter(c => (bd[c.key] || 0) > 0)
+          .map(c => `
+            <div class="evolution-tooltip-metric">
+              <span style="color: ${c.color};">● ${escapeHtml(c.label)}:</span>
+              <span style="font-family: monospace;">${(bd[c.key] || 0).toLocaleString()} t</span>
+            </div>
+          `).join("");
+
+        tooltipEl.innerHTML = `
+          <div class="evolution-tooltip-header">
+            <span>Step ${pt.step_index}${isCkpt}</span>
+            <span style="color: var(--accent-green);">${deltaFormatted} t</span>
+          </div>
+          <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(pt.title)}</div>
+          <div class="evolution-tooltip-metric">
+            <strong>Active Prompt:</strong>
+            <strong style="color: #f472b6;">${pt.active_tokens.toLocaleString()} tokens</strong>
+          </div>
+          <div class="evolution-tooltip-metric">
+            <span class="dim-text">Cumulative Session:</span>
+            <span style="font-family: monospace;">${pt.cumulative_tokens.toLocaleString()} tokens</span>
+          </div>
+          <div class="evolution-tooltip-breakdown">
+            ${breakdownLines}
+          </div>
+        `;
+
+        tooltipEl.style.display = "block";
+        const tipW = 280;
+        let tipLeft = mouseX + 15;
+        if (tipLeft + tipW > rect.width) {
+          tipLeft = mouseX - tipW - 15;
+        }
+        tooltipEl.style.left = `${Math.max(10, tipLeft)}px`;
+        tooltipEl.style.top = "15px";
+      }
+    });
+
+    container.addEventListener("mouseleave", () => {
+      const scrubberEl = document.getElementById("evolution-scrubber-line");
+      const tooltipEl = document.getElementById("evolution-tooltip");
+      if (scrubberEl) scrubberEl.style.display = "none";
+      if (tooltipEl) tooltipEl.style.display = "none";
+    });
+
+    container.addEventListener("click", (e) => {
+      const rep = currentContextReport?.evolution;
+      if (!rep || !rep.points || rep.points.length === 0) return;
+      const pts = rep.points;
+      const rect = container.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const pW = (plotW / svgWidth) * rect.width;
+      const pL = (padL / svgWidth) * rect.width;
+      const ratio = Math.max(0, Math.min(1, (mouseX - pL) / pW));
+      const idx = Math.min(pts.length - 1, Math.max(0, Math.round(ratio * (pts.length - 1))));
+      const pt = pts[idx];
+
+      const searchBox = document.getElementById("frame-search");
+      if (searchBox) {
+        searchBox.value = `Step ${pt.step_index}`;
+        filterContextFrames();
+        searchBox.scrollIntoView({ behavior: "smooth" });
+      }
+    });
+  }
+}
+
 
 function scrollToBottom() {
   scrollToViewBottom("timeline-container");

@@ -173,6 +173,44 @@ class UsageBreakdown(BaseModel):
     percentage: float = 0.0
 
 
+class EvolutionBreakdown(BaseModel):
+    """Component token breakdown at a specific step in time."""
+
+    system_instruction: int = 0
+    tool_declarations: int = 0
+    compaction_summary: int = 0
+    user_prompts: int = 0
+    cot_reasoning: int = 0
+    tool_outputs: int = 0
+    assistant_responses: int = 0
+    system_history: int = 0
+
+
+class EvolutionStepPoint(BaseModel):
+    """Token metrics at an individual step."""
+
+    step_index: int
+    source: str = ""
+    frame_type: str = ""
+    title: str = ""
+    delta_tokens: int = 0
+    active_tokens: int = 0
+    cumulative_tokens: int = 0
+    is_checkpoint: bool = False
+    breakdown: EvolutionBreakdown = Field(default_factory=EvolutionBreakdown)
+
+
+class ContextEvolutionReport(BaseModel):
+    """Complete time-series evolution of context window and prompt components."""
+
+    conversation_id: str
+    total_steps: int = 0
+    checkpoints: list[int] = Field(default_factory=list)
+    max_active_tokens: int = 0
+    max_cumulative_tokens: int = 0
+    points: list[EvolutionStepPoint] = Field(default_factory=list)
+
+
 class ContextWindowReport(BaseModel):
     """Comprehensive report on the LLM's active and historical context window."""
 
@@ -189,4 +227,6 @@ class ContextWindowReport(BaseModel):
     tool_declarations_tokens: int = 0
     breakdown: list[UsageBreakdown] = Field(default_factory=list)
     frames: list[ContextFrame] = Field(default_factory=list)
+    evolution: Optional[ContextEvolutionReport] = None
+
 

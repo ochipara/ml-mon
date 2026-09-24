@@ -86,6 +86,20 @@ def create_app(config: Optional[AntigravityConfig] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Context for conversation {conversation_id} not found")
         return report.model_dump()
 
+    @app.get("/api/conversations/{conversation_id}/evolution")
+    async def get_context_evolution(conversation_id: str):
+        """Get the step-by-step context window and prompt evolution series."""
+        if conversation_id.lower() == "latest":
+            summaries = scanner.scan_all()
+            if not summaries:
+                raise HTTPException(status_code=404, detail="No conversations found")
+            conversation_id = summaries[0].id
+
+        report = parser.extract_context_window(conversation_id)
+        if not report or not report.evolution:
+            raise HTTPException(status_code=404, detail=f"Evolution for conversation {conversation_id} not found")
+        return report.evolution.model_dump()
+
     @app.get("/api/conversations/{conversation_id}/prompt")
     async def get_conversation_prompt(conversation_id: str):
         """Return the reconstructed full prompt and semantic sections."""

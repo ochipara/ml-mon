@@ -10,10 +10,13 @@ from typing import Any, Optional
 
 from ml_mon.config import AntigravityConfig
 from ml_mon.core.models import (
+    ContextEvolutionReport,
     ContextFrame,
     ContextWindowReport,
     ConversationDetail,
     ConversationSummary,
+    EvolutionBreakdown,
+    EvolutionStepPoint,
     FileModification,
     MediaArtifact,
     PlanAsset,
@@ -722,6 +725,14 @@ class ConversationParser:
                 )
             )
 
+        # 5. Extract Step-by-Step Context & Prompt Evolution
+        evolution = self.extract_context_evolution(
+            conversation_id=conversation_id,
+            frames=frames,
+            system_tokens=sys_tokens,
+            tool_tokens=tool_tokens,
+        )
+
         return ContextWindowReport(
             conversation_id=conversation_id,
             active_window_start_step=active_window_start,
@@ -736,5 +747,111 @@ class ConversationParser:
             tool_declarations_tokens=tool_tokens,
             breakdown=breakdowns,
             frames=all_frames,
+            evolution=evolution,
         )
+
+    def extract_context_evolution(
+        self,
+        conversation_id: str,
+        frames: list[ContextFrame],
+        system_tokens: int,
+        tool_tokens: int,
+    ) -> ContextEvolutionReport:
+        """Compute the step-by-step token state and component breakdown across the entire session."""
+        if not frames:
+            return ContextEvolutionReport(conversation_id=conversation_id)
+
+        from collections import defaultdict
+
+        checkpoints = sorted(list(set(f.step_index for f in frames if f.frame_type == "CHECKPOINT")))
+        checkpoints_set = set(checkpoints)
+
+        frames_by_step: dict[int, list[ContextFrame]] = defaultdict(list)
+        for f in frames:
+            if f.frame_type not in ("SYSTEM_PROMPT", "TOOL_DECLARATIONS"):
+                frames_by_step[f.step_index].append(f)
+
+        sorted_steps = sorted(frames_by_step.keys())
+        if not sorted_steps:
+            return ContextEvolutionReport(conversation_id=conversation_id)
+
+        active_cats: dict[str, int] = {
+            "system_instruction": system_tokens,
+            "tool_declarations": tool_tokens,
+            "compaction_summary": 0,
+            "user_prompts": 0,
+            "cot_reasoning": 0,
+            "tool_outputs": 0,
+            "assistant_responses": 0,
+            "system_history": 0,
+        }
+        cumul_tokens = system_tokens + tool_tokens
+
+        points: list[EvolutionStepPoint] = []
+
+        for step in sorted_steps:
+            step_frames = frames_by_step[step]
+            is_ckpt = step in checkpoints_set
+
+            if is_ckpt:
+                # Reset active window to baseline when compaction boundary triggers
+                active_cats = {
+                    "system_instruction": system_tokens,
+                    "tool_declarations": tool_tokens,
+                    "compaction_summary": 0,
+                    "user_prompts": 0,
+                    "cot_reasoning": 0,
+                    "tool_outputs": 0,
+                    "assistant_responses": 0,
+                    "system_history": 0,
+                }
+
+            step_delta = sum(f.est_tokens for f in step_frames)
+            for f in step_frames:
+                if f.category in active_cats:
+                    active_cats[f.category] += f.est_tokens
+
+            cumul_tokens += step_delta
+            active_total = sum(active_cats.values())
+
+            # Pick representative source & title for step
+            source = step_frames[0].source if step_frames else ""
+            frame_type = step_frames[0].frame_type if step_frames else ""
+            title = step_frames[0].title if step_frames else f"Step {step}"
+
+            points.append(
+                EvolutionStepPoint(
+                    step_index=step,
+                    source=source,
+                    frame_type=frame_type,
+                    title=title,
+                    delta_tokens=step_delta,
+                    active_tokens=active_total,
+                    cumulative_tokens=cumul_tokens,
+                    is_checkpoint=is_ckpt,
+                    breakdown=EvolutionBreakdown(
+                        system_instruction=active_cats.get("system_instruction", 0),
+                        tool_declarations=active_cats.get("tool_declarations", 0),
+                        compaction_summary=active_cats.get("compaction_summary", 0),
+                        user_prompts=active_cats.get("user_prompts", 0),
+                        cot_reasoning=active_cats.get("cot_reasoning", 0),
+                        tool_outputs=active_cats.get("tool_outputs", 0),
+                        assistant_responses=active_cats.get("assistant_responses", 0),
+                        system_history=active_cats.get("system_history", 0),
+                    ),
+                )
+            )
+
+        max_active = max((p.active_tokens for p in points), default=0)
+        max_cumul = max((p.cumulative_tokens for p in points), default=0)
+
+        return ContextEvolutionReport(
+            conversation_id=conversation_id,
+            total_steps=len(sorted_steps),
+            checkpoints=checkpoints,
+            max_active_tokens=max_active,
+            max_cumulative_tokens=max_cumul,
+            points=points,
+        )
+
 

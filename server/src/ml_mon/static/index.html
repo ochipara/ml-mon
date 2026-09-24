@@ -265,6 +265,44 @@
             </div>
           </div>
 
+          <!-- Context Window & Prompt Evolution Time Series Chart -->
+          <div class="usage-bar-card evolution-chart-card">
+            <div class="usage-bar-header">
+              <div class="usage-bar-title-row">
+                <div>
+                  <h3 id="evolution-chart-title">📈 Context Window & Prompt Evolution Over Time</h3>
+                  <span class="dim-text" id="evolution-chart-subtitle">Step-by-step token trajectory showing tool spikes, CoT growth, and compaction cliff drops</span>
+                </div>
+                <div class="evolution-header-controls">
+                  <div class="bar-mode-toggle-group">
+                    <button class="mode-btn active" id="btn-chart-active" onclick="setEvolutionChartMode('active')">⚡ Active Window (Sawtooth)</button>
+                    <button class="mode-btn" id="btn-chart-cumulative" onclick="setEvolutionChartMode('cumulative')">📈 Cumulative Session</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Chart Container -->
+            <div class="evolution-svg-container" id="evolution-chart-container">
+              <svg id="evolution-svg" class="evolution-svg" viewBox="0 0 1000 320" preserveAspectRatio="none">
+                <!-- SVG dynamically populated -->
+              </svg>
+              <!-- Interactive Scrubber Elements -->
+              <div id="evolution-scrubber-line" class="evolution-scrubber-line" style="display: none;"></div>
+              <div id="evolution-tooltip" class="evolution-tooltip" style="display: none;"></div>
+            </div>
+
+            <!-- Evolution Legend & Summary Footer -->
+            <div class="evolution-footer">
+              <div class="stacked-legend" id="evolution-legend">
+                <!-- Legend items with colors -->
+              </div>
+              <div class="evolution-stats-summary" id="evolution-stats-summary">
+                <!-- Highlights: peak active, compactions count, total turns -->
+              </div>
+            </div>
+          </div>
+
           <!-- Frame Explorer Controls -->
           <div class="frames-control-bar">
             <div class="filter-search" style="width: 320px;">
