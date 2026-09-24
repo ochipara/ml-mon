@@ -140,16 +140,18 @@ async function selectSession(sessionId) {
   // Update header
   const session = allSessions.find((s) => s.id === sessionId);
   if (session) {
-    document.getElementById("active-session-title").innerText = session.title;
-    document.getElementById("active-session-id").innerText = session.id;
-    const dot = document.getElementById("session-status-dot");
-    const statusText = document.getElementById("session-status-text");
-    if (session.is_active) {
-      dot.className = "pulse-dot live";
-      statusText.innerText = "LIVE STREAMING";
-    } else {
-      dot.className = "pulse-dot idle";
-      statusText.innerText = "COMPLETED";
+    const idEl = document.getElementById("active-session-id");
+    if (idEl) {
+      idEl.innerText = session.id;
+      idEl.title = session.id;
+    }
+    const modelEl = document.getElementById("active-session-model");
+    if (modelEl) {
+      if (session.model_name) {
+        modelEl.innerText = `🤖 ${session.model_name}`;
+      } else {
+        modelEl.innerText = `🤖 Model: -`;
+      }
     }
   }
 
@@ -163,17 +165,17 @@ async function selectSession(sessionId) {
     currentSessionDetail = detail;
     timelineContainer.innerHTML = "";
 
-    // 1. Update Model Badge
+    // 1. Update Model Name
     const modelBadge = document.getElementById("active-session-model");
-    const modelName = (detail.analytics && detail.analytics.model_name) ||
-                      (detail.summary && detail.summary.model_name) ||
-                      (session && session.model_name);
-    if (modelName) {
-      modelBadge.innerText = `🤖 ${modelName}`;
-      modelBadge.style.display = "inline-flex";
-    } else {
-      modelBadge.innerText = `🤖 Default`;
-      modelBadge.style.display = "inline-flex";
+    if (modelBadge) {
+      const modelName = (detail.analytics && detail.analytics.model_name) ||
+                        (detail.summary && detail.summary.model_name) ||
+                        (session && session.model_name);
+      if (modelName) {
+        modelBadge.innerText = `🤖 ${modelName}`;
+      } else {
+        modelBadge.innerText = `🤖 Default Model`;
+      }
     }
 
     // 2. Render historical steps

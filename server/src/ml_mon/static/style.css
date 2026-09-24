@@ -288,45 +288,34 @@ body {
 
 .session-info {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  max-width: 45%;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 400px;
 }
 
-.status-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.session-model {
   font-size: 13px;
-  font-weight: 500;
-}
-
-.pulse-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background-color: var(--text-dim);
-}
-
-.pulse-dot.live {
-  background-color: var(--accent-green);
-  box-shadow: 0 0 10px var(--accent-green);
-  animation: pulse 1.8s infinite;
-}
-
-@keyframes pulse {
-  0% { transform: scale(0.95); opacity: 0.8; }
-  50% { transform: scale(1.25); opacity: 1; }
-  100% { transform: scale(0.95); opacity: 0.8; }
-}
-
-.session-title {
-  font-size: 16px;
   font-weight: 600;
+  color: #60a5fa;
+  letter-spacing: 0.2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.session-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+  line-height: 1.2;
 }
 
 .model-badge {
@@ -337,16 +326,6 @@ body {
   border-radius: 6px;
   border: 1px solid rgba(59, 130, 246, 0.3);
   white-space: nowrap;
-}
-
-.session-id-pill {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  background-color: var(--bg-elevated);
-  padding: 4px 10px;
-  border-radius: 6px;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
 }
 
 .tab-group {
