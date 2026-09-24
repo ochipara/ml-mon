@@ -1609,7 +1609,6 @@ body {
   align-items: center;
   gap: 3px;
   box-shadow: 0 0 8px rgba(168, 85, 247, 0.15);
-  cursor: help;
   transition: all 0.15s ease;
 }
 
