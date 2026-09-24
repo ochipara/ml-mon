@@ -7,8 +7,9 @@ A comprehensive real-time monitoring, visualization, and prompt reverse-engineer
 ## ✨ Features
 
 - 💬 **Live Timeline & CoT Stream**: Real-time SSE streaming of agent steps, internal reasoning thoughts, tool calls, execution outputs, and model responses.
+- ⏱️ **Step Timing & Latency Analytics**: In-depth wall-clock timing breakdown, model thinking latency vs. tool execution time distribution, step duration waterfall chart, and per-tool performance benchmarks.
 - 🌐 **Remote vs. Local Step Classification**: Clear visual distinction between remote LLM API inferences (`🌐 Remote` badge) and purely local IDE operations (user inputs, file executions, compactions).
-- 🔍 **Point-in-Time Context Window Inspector**: Click any `🌐 Remote` badge to view the exact active context window, token breakdown, and reconstructed prompt passed to the agent at that step.
+- 🔍 **Point-in-Time Context Window Inspector**: Click any `🌐 Remote` badge or step to view the exact active context window, token breakdown, and reconstructed prompt passed to the agent at that step.
 - 📈 **Context Window & Prompt Evolution Over Time**: Interactive stacked time-series vector chart displaying active context window sawtooths (compaction cliff drops) vs. cumulative session tokens with interactive crosshair scrubbing.
 - 📄 **Full Prompt Reconstruction**: Complete reconstruction of base system identity, rules, skills/plugins catalogs, tool parameter schemas, and conversation trajectories directly from Antigravity storage.
 - 📋 **Planning Documents & File Tracking**: Formatted viewing of `implementation_plan.md`, `walkthrough.md`, and real-time modified file tracking.

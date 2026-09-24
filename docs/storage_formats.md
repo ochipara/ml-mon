@@ -272,7 +272,36 @@ When inspecting an individual turn (e.g. via the `🌐 Remote` badge in the UI o
 
 ---
 
-## 7. REST API Reference
+## 7. Step Duration Computation & Timing Analytics
+
+`gmon` automatically computes wall-clock execution metrics and latency breakdowns across the entire conversation:
+
+### 1. Step Duration Extraction Formula
+Each step record in `transcript_full.jsonl` contains an ISO timestamp (`created_at`). The duration $\Delta t_i$ of step $i$ is determined by the difference between consecutive timestamps:
+
+$$\Delta t_i = t_i - t_{i-1} \quad \text{where } 0.0 \le \Delta t_i < 3600.0\text{ seconds}$$
+
+- **Model Reasoning Latency**: For `PLANNER_RESPONSE` steps containing Chain of Thought, $\Delta t_i$ is attributed to `step.thought.duration_seconds`.
+- **Tool Execution Duration**: For tool execution steps (`VIEW_FILE`, `RUN_COMMAND`, `REPLACE_FILE_CONTENT`, etc.), $\Delta t_i$ is attributed to `step.tool_result.duration_seconds`. In addition, tool result payloads often embed explicit `Created At` and `Completed At` execution timestamps from the local host environment.
+
+### 2. Session-Level Timing Aggregations
+`gmon` computes high-level performance metrics:
+- **Total Session Span**: $T_{\text{session}} = \max(t_{\text{end}} - t_{\text{start}}, \sum \Delta t_i)$
+- **Cumulative Thinking Time**: $T_{\text{thinking}} = \sum_{i \in \text{CoT}} \Delta t_i$
+- **Cumulative Tool Execution Time**: $T_{\text{tools}} = \sum_{i \in \text{Tools}} \Delta t_i$
+- **Average Step Latency**: $\bar{t} = \frac{1}{N_{\text{timed}}} \sum_{i=1}^{N_{\text{timed}}} \Delta t_i$
+- **Per-Tool Performance Matrix**: For each unique tool $T$, computes total invocations $N_T$, total duration $\sum \Delta t_{i \in T}$, average duration $\bar{t}_T$, and peak execution time $\max(\Delta t_{i \in T})$.
+
+### 3. Step Latency Waterfall
+The web dashboard renders an interactive SVG bar chart mapping each step index to its wall-clock duration with color-coded classification:
+- 🟣 **Purple**: Model Reasoning / Chain of Thought
+- 🟢 **Green**: Tool Executions
+- 🟡 **Yellow**: Compaction Checkpoints
+- 🔵 **Blue**: User Inputs
+
+---
+
+## 8. REST API Reference
 
 The `gmon` backend exposes a high-performance REST API:
 
@@ -287,5 +316,6 @@ The `gmon` backend exposes a high-performance REST API:
 | `/api/conversations/{id}/prompt` | `GET` | `ReconstructedPrompt` | Full prompt reverse-engineered into structured semantic sections and tool parameter schemas. |
 | `/api/conversations/{id}/prompt/raw` | `GET` | `text/plain` | Raw text of the reconstructed prompt (supports `?download=true`). |
 | `/api/artifacts/{id}/{filename}` | `GET` | Binary / Media | Serves session screenshots, webp recordings, and task logs. |
+
 
 
