@@ -40,7 +40,7 @@ gmon list --active
 gmon list --json
 ```
 
-### 2. Show Conversation Details (`gmon show`)
+### 3. Show Conversation Details (`gmon show`)
 Displays the complete chronological conversation history, including user requests, Chain of Thought reasoning, tool calls, and final responses:
 ```bash
 # View the most recent conversation
@@ -62,7 +62,7 @@ gmon show latest --plan
 gmon show latest --json
 ```
 
-### 3. View Chain of Thought Only (`gmon cot`)
+### 4. View Chain of Thought Only (`gmon cot`)
 Convenient shortcut to inspect all internal reasoning steps in chronological order:
 ```bash
 # Show all thoughts from the latest conversation
@@ -72,7 +72,7 @@ gmon cot latest
 gmon cot <conversation-id>
 ```
 
-### 4. View Planning Documents (`gmon plan`)
+### 5. View Planning Documents (`gmon plan`)
 Displays the formatted `implementation_plan.md` and `walkthrough.md` for a session:
 ```bash
 # Show plan for latest conversation
@@ -82,7 +82,7 @@ gmon plan latest
 gmon plan <conversation-id>
 ```
 
-### 5. Inspect Context Window & Usage Stats (`gmon context`)
+### 6. Inspect Context Window & Usage Stats (`gmon context`)
 Inspects the active LLM context window, compaction boundary, estimated token usage, and message frames:
 ```bash
 # Inspect active context window for latest conversation
@@ -96,5 +96,25 @@ gmon context latest --all-frames
 
 # Export full context report as JSON
 gmon context latest --json-out
+```
+
+### 7. Reconstruct Full LLM Prompt (`gmon prompt`)
+Reverse-engineers and reconstructs the complete system prompt, rules, skills catalog, tool declarations, compaction memories, and conversation history:
+```bash
+# Reconstruct and view formatted prompt for latest session
+gmon prompt latest
+
+# View a specific prompt section (system, tools, skills, memory, history)
+gmon prompt latest --section tools
+gmon prompt latest --section system
+
+# Print raw plaintext prompt
+gmon prompt latest --raw
+
+# Save reconstructed prompt to a file
+gmon prompt latest --save-to ./prompt_snapshot.txt
+
+# Export as structured JSON
+gmon prompt latest --json-out
 ```
 
