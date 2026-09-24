@@ -12,10 +12,20 @@ const renderedStepIds = new Set();
 
 // Configure marked if loaded
 if (window.marked) {
-  marked.setOptions({
-    gfm: true,
-    breaks: true,
-  });
+  try {
+    const renderer = new marked.Renderer();
+    renderer.html = function (token) {
+      const rawText = typeof token === "object" && token !== null ? (token.raw || token.text || "") : String(token || "");
+      return escapeHtml(rawText);
+    };
+    marked.setOptions({
+      renderer: renderer,
+      gfm: true,
+      breaks: true,
+    });
+  } catch (e) {
+    console.warn("Error setting custom marked renderer:", e);
+  }
 }
 
 // Built-in resilient markdown renderer
@@ -201,12 +211,15 @@ async function selectSession(sessionId) {
     // 6. Render IDE Context & Analytics Tab
     renderContextTab(detail);
 
-    // 7. If on Context & Usage tab, load it
+    // 7. Render Timing & Latency Tab
+    renderTimingTab(detail);
+
+    // 8. If on Context & Usage tab, load it
     if (document.getElementById("tab-usage") && document.getElementById("tab-usage").classList.contains("active")) {
       loadContextWindow(sessionId);
     }
 
-    // 8. If on Full Prompt tab, load it
+    // 9. If on Full Prompt tab, load it
     if (document.getElementById("tab-prompt") && document.getElementById("tab-prompt").classList.contains("active")) {
       loadPromptView(sessionId);
     }
@@ -775,12 +788,432 @@ function switchTab(tab) {
     document.getElementById("view-usage").classList.add("active");
     if (filterBar) filterBar.style.display = "none";
     loadContextWindow(activeSessionId);
+  } else if (tab === "timing") {
+    document.getElementById("tab-timing").classList.add("active");
+    document.getElementById("view-timing").classList.add("active");
+    if (filterBar) filterBar.style.display = "none";
+    if (currentSessionDetail) {
+      renderTimingTab(currentSessionDetail);
+    }
   } else if (tab === "prompt") {
     document.getElementById("tab-prompt").classList.add("active");
     document.getElementById("view-prompt").classList.add("active");
     if (filterBar) filterBar.style.display = "none";
     loadPromptView(activeSessionId);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Timing & Latency Analytics Logic
+// ---------------------------------------------------------------------------
+let timingChartSortMode = "sequence"; // 'sequence' or 'duration'
+let currentTimingSteps = [];
+
+function setTimingChartSort(mode) {
+  timingChartSortMode = mode;
+  const btnSeq = document.getElementById("btn-timing-sort-seq");
+  const btnDur = document.getElementById("btn-timing-sort-dur");
+  if (btnSeq) btnSeq.classList.toggle("active", mode === "sequence");
+  if (btnDur) btnDur.classList.toggle("active", mode === "duration");
+  if (currentSessionDetail) {
+    renderTimingTab(currentSessionDetail);
+  }
+}
+
+function formatDuration(seconds) {
+  if (seconds === null || seconds === undefined || isNaN(seconds)) return "-";
+  if (seconds < 1) return `${(seconds * 1000).toFixed(0)}ms`;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = (seconds % 60).toFixed(1);
+  return `${mins}m ${secs}s`;
+}
+
+function renderTimingTab(detail) {
+  if (!detail || !detail.steps) return;
+  const steps = detail.steps;
+
+  let totalThinkingSeconds = 0;
+  let totalToolSeconds = 0;
+  let totalOtherSeconds = 0;
+  let totalRecordedSeconds = 0;
+  let timedStepsCount = 0;
+  let maxStepDuration = 0;
+  let maxStepInfo = null;
+
+  const toolAggregates = {}; // name -> { count, totalTime, maxTime }
+  const parsedSteps = [];
+
+  // Parse step durations
+  steps.forEach((step) => {
+    let duration = step.duration_seconds;
+    if (duration === null || duration === undefined) {
+      if (step.thought && step.thought.duration_seconds) {
+        duration = step.thought.duration_seconds;
+      } else if (step.tool_result && step.tool_result.duration_seconds) {
+        duration = step.tool_result.duration_seconds;
+      }
+    }
+
+    const hasDuration = duration !== null && duration !== undefined && !isNaN(duration) && duration > 0;
+    const durVal = hasDuration ? duration : 0;
+
+    let category = "other";
+    let typeLabel = step.step_type || "UNKNOWN";
+    let detailSnippet = "";
+
+    if (step.thought) {
+      category = "thinking";
+      typeLabel = "🧠 Thinking / CoT";
+      detailSnippet = step.thought.preview || step.thought.content || "Model Reasoning";
+      totalThinkingSeconds += durVal;
+    } else if (step.tool_result) {
+      category = "tool";
+      const toolName = step.tool_result.tool_name || step.step_type || "TOOL";
+      typeLabel = `🛠️ ${toolName}`;
+      detailSnippet = (step.tool_result.content || "").substring(0, 100);
+      totalToolSeconds += durVal;
+
+      if (!toolAggregates[toolName]) {
+        toolAggregates[toolName] = { count: 0, totalTime: 0, maxTime: 0 };
+      }
+      toolAggregates[toolName].count += 1;
+      toolAggregates[toolName].totalTime += durVal;
+      if (durVal > toolAggregates[toolName].maxTime) {
+        toolAggregates[toolName].maxTime = durVal;
+      }
+    } else if (step.tool_calls && step.tool_calls.length) {
+      category = "tool";
+      const call = step.tool_calls[0];
+      const toolName = call.tool_name || "TOOL_CALL";
+      typeLabel = `⚙️ Call: ${toolName}`;
+      detailSnippet = call.tool_summary || call.tool_action || JSON.stringify(call.arguments || {}).substring(0, 100);
+      totalToolSeconds += durVal;
+
+      if (!toolAggregates[toolName]) {
+        toolAggregates[toolName] = { count: 0, totalTime: 0, maxTime: 0 };
+      }
+      toolAggregates[toolName].count += 1;
+      toolAggregates[toolName].totalTime += durVal;
+      if (durVal > toolAggregates[toolName].maxTime) {
+        toolAggregates[toolName].maxTime = durVal;
+      }
+    } else if (step.step_type === "USER_INPUT") {
+      category = "user";
+      typeLabel = "👤 User Input";
+      detailSnippet = step.user_prompt || (step.raw_content || "").substring(0, 100);
+      totalOtherSeconds += durVal;
+    } else if (step.is_checkpoint || step.step_type === "CHECKPOINT") {
+      category = "checkpoint";
+      typeLabel = "⚙️ Checkpoint";
+      detailSnippet = "Compaction / Memory Reset";
+      totalOtherSeconds += durVal;
+    } else {
+      category = "system";
+      typeLabel = step.step_type || "System";
+      detailSnippet = (step.raw_content || step.model_response || "").substring(0, 100);
+      totalOtherSeconds += durVal;
+    }
+
+    if (hasDuration) {
+      totalRecordedSeconds += durVal;
+      timedStepsCount += 1;
+      if (durVal > maxStepDuration) {
+        maxStepDuration = durVal;
+        maxStepInfo = { stepIndex: step.step_index, typeLabel, duration: durVal };
+      }
+    }
+
+    parsedSteps.push({
+      stepIndex: step.step_index,
+      createdAt: step.created_at || "",
+      stepType: step.step_type,
+      category,
+      typeLabel,
+      detailSnippet,
+      duration: durVal,
+      hasDuration,
+      source: step.source || "UNKNOWN",
+    });
+  });
+
+  currentTimingSteps = parsedSteps;
+
+  // Compute wall clock from start to end timestamps if available
+  let sessionSpanSeconds = totalRecordedSeconds;
+  if (steps.length >= 2 && steps[0].created_at && steps[steps.length - 1].created_at) {
+    try {
+      const t0 = new Date(steps[0].created_at.replace("Z", "")).getTime();
+      const t1 = new Date(steps[steps.length - 1].created_at.replace("Z", "")).getTime();
+      if (!isNaN(t0) && !isNaN(t1) && t1 >= t0) {
+        sessionSpanSeconds = Math.max(sessionSpanSeconds, (t1 - t0) / 1000);
+      }
+    } catch (e) {
+      // fallback to recorded
+    }
+  }
+
+  // 1. Top Summary Cards
+  const elTotalSession = document.getElementById("timing-total-session-time");
+  if (elTotalSession) elTotalSession.innerText = formatDuration(sessionSpanSeconds);
+
+  const elTotalThinking = document.getElementById("timing-total-thinking-time");
+  if (elTotalThinking) elTotalThinking.innerText = formatDuration(totalThinkingSeconds);
+
+  const elThinkingShare = document.getElementById("timing-thinking-share");
+  const thinkingPct = sessionSpanSeconds > 0 ? ((totalThinkingSeconds / sessionSpanSeconds) * 100).toFixed(1) : "0";
+  if (elThinkingShare) elThinkingShare.innerText = `${thinkingPct}% of session latency`;
+
+  const elTotalTool = document.getElementById("timing-total-tool-time");
+  if (elTotalTool) elTotalTool.innerText = formatDuration(totalToolSeconds);
+
+  const elToolShare = document.getElementById("timing-tool-share");
+  const toolPct = sessionSpanSeconds > 0 ? ((totalToolSeconds / sessionSpanSeconds) * 100).toFixed(1) : "0";
+  if (elToolShare) elToolShare.innerText = `${toolPct}% of session latency`;
+
+  const elAvgStep = document.getElementById("timing-avg-step-time");
+  const avgDuration = timedStepsCount > 0 ? totalRecordedSeconds / timedStepsCount : 0;
+  if (elAvgStep) elAvgStep.innerText = formatDuration(avgDuration);
+
+  const elStepCount = document.getElementById("timing-step-count");
+  if (elStepCount) elStepCount.innerText = `Across ${timedStepsCount} timed steps (${steps.length} total)`;
+
+  const elMaxStep = document.getElementById("timing-max-step-time");
+  if (elMaxStep) elMaxStep.innerText = maxStepDuration > 0 ? formatDuration(maxStepDuration) : "0s";
+
+  const elMaxStepDesc = document.getElementById("timing-max-step-desc");
+  if (elMaxStepDesc) {
+    elMaxStepDesc.innerText = maxStepInfo ? `Step ${maxStepInfo.stepIndex} (${maxStepInfo.typeLabel})` : "-";
+  }
+
+  // 2. Phase Distribution Progress Bar
+  const phaseBar = document.getElementById("timing-phase-bar");
+  const phaseLegend = document.getElementById("timing-phase-legend");
+  if (phaseBar && phaseLegend) {
+    const totalForBar = Math.max(sessionSpanSeconds, totalRecordedSeconds, 0.001);
+    const pThinking = ((totalThinkingSeconds / totalForBar) * 100).toFixed(1);
+    const pTool = ((totalToolSeconds / totalForBar) * 100).toFixed(1);
+    const pOther = Math.max(0, (100 - parseFloat(pThinking) - parseFloat(pTool))).toFixed(1);
+
+    phaseBar.innerHTML = `
+      <div class="mini-bar-segment" style="width: ${pThinking}%; background-color: var(--accent-purple);" title="Thinking / CoT: ${formatDuration(totalThinkingSeconds)} (${pThinking}%)"></div>
+      <div class="mini-bar-segment" style="width: ${pTool}%; background-color: var(--accent-green);" title="Tool Execution: ${formatDuration(totalToolSeconds)} (${pTool}%)"></div>
+      <div class="mini-bar-segment" style="width: ${pOther}%; background-color: #4b5563;" title="System / Idle / User: ${pOther}%"></div>
+    `;
+
+    phaseLegend.innerHTML = `
+      <div class="legend-item"><span class="legend-dot" style="background: var(--accent-purple);"></span>🧠 Model Thinking: <strong>${formatDuration(totalThinkingSeconds)}</strong> (${pThinking}%)</div>
+      <div class="legend-item"><span class="legend-dot" style="background: var(--accent-green);"></span>🛠️ Tool Execution: <strong>${formatDuration(totalToolSeconds)}</strong> (${pTool}%)</div>
+      <div class="legend-item"><span class="legend-dot" style="background: #4b5563;"></span>⏱️ System / User / Other: <strong>${pOther}%</strong></div>
+    `;
+  }
+
+  // 3. Render Waterfall SVG Bar Chart
+  renderTimingWaterfallChart(parsedSteps, maxStepDuration);
+
+  // 4. Render Tool Aggregates Table
+  renderTimingToolsTable(toolAggregates, totalToolSeconds);
+
+  // 5. Render Step-by-Step Table
+  renderTimingStepsTable(parsedSteps, maxStepDuration);
+}
+
+function renderTimingWaterfallChart(parsedSteps, maxDuration) {
+  const svg = document.getElementById("timing-chart-svg");
+  if (!svg) return;
+
+  if (!parsedSteps.length) {
+    svg.innerHTML = '<text x="500" y="120" text-anchor="middle" fill="#6b7280" font-size="14">No step timing data available</text>';
+    return;
+  }
+
+  let stepsToChart = [...parsedSteps];
+  if (timingChartSortMode === "duration") {
+    stepsToChart.sort((a, b) => b.duration - a.duration);
+  }
+
+  const chartWidth = 1000;
+  const chartHeight = 240;
+  const paddingLeft = 55;
+  const paddingRight = 20;
+  const paddingTop = 20;
+  const paddingBottom = 40;
+
+  const innerWidth = chartWidth - paddingLeft - paddingRight;
+  const innerHeight = chartHeight - paddingTop - paddingBottom;
+  const effectiveMaxDur = Math.max(maxDuration, 1.0);
+
+  // Grid lines
+  let gridLinesHtml = `
+    <line x1="${paddingLeft}" y1="${paddingTop + innerHeight}" x2="${chartWidth - paddingRight}" y2="${paddingTop + innerHeight}" stroke="#1f2937" stroke-width="1"/>
+    <line x1="${paddingLeft}" y1="${paddingTop}" x2="${chartWidth - paddingRight}" y2="${paddingTop}" stroke="#1f2937" stroke-dasharray="3,3" stroke-width="1"/>
+    <line x1="${paddingLeft}" y1="${paddingTop + innerHeight / 2}" x2="${chartWidth - paddingRight}" y2="${paddingTop + innerHeight / 2}" stroke="#1f2937" stroke-dasharray="3,3" stroke-width="1"/>
+    <text x="${paddingLeft - 8}" y="${paddingTop + 4}" text-anchor="end" fill="#6b7280" font-size="10" font-family="monospace">${effectiveMaxDur.toFixed(1)}s</text>
+    <text x="${paddingLeft - 8}" y="${paddingTop + innerHeight / 2 + 4}" text-anchor="end" fill="#6b7280" font-size="10" font-family="monospace">${(effectiveMaxDur / 2).toFixed(1)}s</text>
+    <text x="${paddingLeft - 8}" y="${paddingTop + innerHeight + 4}" text-anchor="end" fill="#6b7280" font-size="10" font-family="monospace">0s</text>
+  `;
+
+  const barCount = stepsToChart.length;
+  const barSlotWidth = innerWidth / barCount;
+  const barWidth = Math.max(2, Math.min(barSlotWidth * 0.75, 24));
+  const barOffset = (barSlotWidth - barWidth) / 2;
+
+  let barsHtml = "";
+
+  stepsToChart.forEach((s, idx) => {
+    const x = paddingLeft + idx * barSlotWidth + barOffset;
+    const barH = (s.duration / effectiveMaxDur) * innerHeight;
+    const y = paddingTop + innerHeight - barH;
+
+    let fillColor = "#6b7280";
+    if (s.category === "thinking") fillColor = "#a855f7";
+    else if (s.category === "tool") fillColor = "#10b981";
+    else if (s.category === "user") fillColor = "#3b82f6";
+    else if (s.category === "checkpoint") fillColor = "#eab308";
+
+    barsHtml += `
+      <rect 
+        x="${x}" 
+        y="${y}" 
+        width="${barWidth}" 
+        height="${Math.max(barH, 2)}" 
+        rx="2" 
+        fill="${fillColor}" 
+        opacity="0.85" 
+        style="cursor: pointer; transition: opacity 0.15s, transform 0.15s;" 
+        data-step="${s.stepIndex}"
+        data-duration="${s.duration}"
+        data-type="${escapeHtml(s.typeLabel)}"
+        data-time="${escapeHtml(s.createdAt)}"
+        onmouseover="showTimingBarTooltip(event, '${s.stepIndex}', '${escapeHtml(s.typeLabel)}', '${s.duration.toFixed(2)}s', '${escapeHtml(s.createdAt)}')"
+        onmouseout="hideTimingBarTooltip()"
+        onclick="openStepContextModal(${s.stepIndex})"
+      />
+    `;
+
+    // Show label every few steps if there are many
+    const labelStep = barCount > 30 ? Math.ceil(barCount / 15) : 1;
+    if (idx % labelStep === 0 || idx === barCount - 1) {
+      barsHtml += `<text x="${x + barWidth / 2}" y="${chartHeight - 12}" text-anchor="middle" fill="#6b7280" font-size="9" font-family="monospace">${s.stepIndex}</text>`;
+    }
+  });
+
+  svg.innerHTML = gridLinesHtml + barsHtml;
+}
+
+function showTimingBarTooltip(evt, stepIdx, typeLabel, durStr, timeStr) {
+  const tooltip = document.getElementById("timing-tooltip");
+  const container = document.getElementById("timing-chart-container");
+  if (!tooltip || !container) return;
+
+  const rect = container.getBoundingClientRect();
+  const x = evt.clientX - rect.left;
+  const y = evt.clientY - rect.top;
+
+  tooltip.innerHTML = `
+    <strong>Step ${stepIdx}</strong> • ${typeLabel}<br/>
+    <span style="color: var(--accent-yellow); font-weight: 700;">⏱️ ${durStr}</span>
+    ${timeStr ? `<span style="color: var(--text-dim); margin-left: 6px;">🕒 ${timeStr.substring(11, 19)}</span>` : ''}
+    <div style="font-size: 10px; color: var(--accent-blue); margin-top: 4px;">Click bar to inspect step context 🔍</div>
+  `;
+  tooltip.style.left = `${x}px`;
+  tooltip.style.top = `${y - 12}px`;
+  tooltip.style.display = "block";
+}
+
+function hideTimingBarTooltip() {
+  const tooltip = document.getElementById("timing-tooltip");
+  if (tooltip) tooltip.style.display = "none";
+}
+
+function renderTimingToolsTable(toolAggregates, totalToolSeconds) {
+  const tbody = document.getElementById("timing-tools-table-body");
+  if (!tbody) return;
+
+  const entries = Object.entries(toolAggregates).sort((a, b) => b[1].totalTime - a[1].totalTime);
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="dim-text" style="text-align: center; padding: 24px;">No tool invocations recorded in this session.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = entries.map(([toolName, agg]) => {
+    const avg = agg.count > 0 ? agg.totalTime / agg.count : 0;
+    const pct = totalToolSeconds > 0 ? ((agg.totalTime / totalToolSeconds) * 100).toFixed(1) : "0";
+    return `
+      <tr>
+        <td><strong><code>${escapeHtml(toolName)}</code></strong></td>
+        <td><span class="tool-badge">${agg.count}</span></td>
+        <td><strong style="color: var(--accent-green);">${formatDuration(agg.totalTime)}</strong></td>
+        <td>${formatDuration(avg)}</td>
+        <td>${formatDuration(agg.maxTime)}</td>
+        <td>
+          <div class="timing-bar-cell">
+            <div class="timing-bar-track">
+              <div class="timing-bar-fill green" style="width: ${pct}%;"></div>
+            </div>
+            <span style="font-size: 11px; color: var(--text-dim); width: 45px; text-align: right;">${pct}%</span>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderTimingStepsTable(parsedSteps, maxDuration) {
+  const tbody = document.getElementById("timing-steps-table-body");
+  if (!tbody) return;
+
+  if (!parsedSteps.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="dim-text" style="text-align: center; padding: 24px;">No step records available.</td></tr>';
+    return;
+  }
+
+  const effectiveMaxDur = Math.max(maxDuration, 0.1);
+
+  tbody.innerHTML = parsedSteps.map((s) => {
+    const timeStr = s.createdAt ? s.createdAt.substring(11, 19) : "-";
+    const pct = ((s.duration / effectiveMaxDur) * 100).toFixed(1);
+    let fillClass = "blue";
+    if (s.category === "thinking") fillClass = "purple";
+    else if (s.category === "tool") fillClass = "green";
+    else if (s.category === "checkpoint") fillClass = "yellow";
+
+    const durDisplay = s.hasDuration ? formatDuration(s.duration) : '<span class="dim-text">-</span>';
+
+    return `
+      <tr class="timing-step-row" data-search="${escapeHtml((s.typeLabel + ' ' + s.detailSnippet + ' ' + s.stepIndex).toLowerCase())}">
+        <td><strong>Step ${s.stepIndex}</strong></td>
+        <td style="color: var(--text-dim); font-family: var(--font-mono); font-size: 11px;">${timeStr}</td>
+        <td><span class="tool-badge">${escapeHtml(s.typeLabel)}</span></td>
+        <td>
+          <div style="max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-secondary);">
+            ${escapeHtml(s.detailSnippet)}
+          </div>
+        </td>
+        <td><strong>${durDisplay}</strong></td>
+        <td>
+          <div class="timing-bar-cell">
+            <div class="timing-bar-track">
+              <div class="timing-bar-fill ${fillClass}" style="width: ${pct}%;"></div>
+            </div>
+            <span style="font-size: 11px; color: var(--text-dim); width: 45px; text-align: right;">${pct}%</span>
+          </div>
+        </td>
+        <td style="text-align: right;">
+          <button class="timing-inspect-btn" onclick="openStepContextModal(${s.stepIndex})">🔍 Inspect</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function filterTimingStepsTable() {
+  const query = (document.getElementById("timing-step-search").value || "").toLowerCase().trim();
+  const rows = document.querySelectorAll(".timing-step-row");
+  rows.forEach((row) => {
+    const searchData = row.getAttribute("data-search") || "";
+    row.style.display = (!query || searchData.includes(query)) ? "" : "none";
+  });
 }
 
 // Load Context Window & Token Usage Report
@@ -1673,8 +2106,8 @@ function renderStepModalFrames(frames) {
             <span class="tool-badge" style="color: var(--text-dim);">${f.char_count.toLocaleString()} chars</span>
           </div>
         </div>
-        <div class="step-frame-body markdown-body" id="${bodyId}" style="display: none;">
-          ${renderMarkdown(f.full_content)}
+        <div class="step-frame-body" id="${bodyId}" style="display: none;">
+          <pre><code>${escapeHtml(f.full_content)}</code></pre>
         </div>
       </div>
     `;
