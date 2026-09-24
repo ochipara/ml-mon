@@ -98,55 +98,104 @@ Every session has a dedicated SQLite database configured with `PRAGMA journal_mo
 
 ---
 
-## 3. Context Window Assembly & Token Estimation
+## 3. Metric Computation & Estimation Methodologies
 
-### How the Context Window is Assembled
-
-On every model invocation, the LLM context window is assembled from the message trajectory:
-
-1. **System & Tool Directives**:
-   - Injected system prompts, agent instructions, rules, and default tool signatures.
-2. **Dynamic IDE State**:
-   - Parsed from `<ADDITIONAL_METADATA>` in `USER_INPUT` steps (active document, cursor line, open tabs, background terminal processes).
-3. **Cross-Session Memory**:
-   - Injected summaries of the 14 most recent conversations (`<conversation_summaries>`) and knowledge items.
-4. **Trajectory & Compaction Boundaries**:
-   - **Uncompacted Sessions**: All turns from `step_index = 0` to the current step remain active in the LLM's context window.
-   - **Compacted Sessions**: When the session exceeds the context budget, Antigravity inserts a `CHECKPOINT` compaction step (`# Resuming from a compaction`). The model's prompt is pruned: all turns prior to the last `CHECKPOINT` are dropped from active memory, and only the compaction summary + subsequent post-compaction turns are sent to the LLM.
-
-### How Token Counts are Computed in `gmon`
-
-Antigravity logs the full text payload of every message frame into `transcript_full.jsonl`, but does not serialize raw BPE token IDs directly into the JSONL keys. `gmon` calculates token metrics using standard Byte-Pair Encoding ratios:
-
-1. **Character Counts**:
-   ```python
-   char_count = len(frame_content)
-   ```
-
-2. **Estimated Token Counts**:
-   Modern LLM tokenizers (Gemini, Claude, GPT-4) average approximately **4 characters per token** for natural language and markdown, and ~3.2 to 4.0 characters per token for code/JSON. `gmon` applies ceiling division:
-   ```python
-   est_tokens = (char_count + 3) // 4  # ceil(char_count / 4.0)
-   ```
-
-3. **Active Context vs. Cumulative Session Tokens**:
-   - **Active Context Tokens**:
-     $$\text{Tokens}_{\text{active}} = \sum_{f \in \text{Frames}_{\ge \text{last\_checkpoint}}} f.\text{est\_tokens}$$
-     Only includes frames currently within the model's active attention window.
-   - **Total Cumulative Session Tokens**:
-     $$\text{Tokens}_{\text{session}} = \sum_{f \in \text{All Frames}} f.\text{est\_tokens}$$
-     Measures all compute and context generated across the entire session lifecycle, including pre-compaction turns.
-
-4. **Component Breakdown**:
-   Frames are aggregated into 6 categories:
-   - **`compaction_summary`**: `# Resuming from a compaction` summaries
-   - **`user_prompts`**: User requests, IDE tabs, cursor position, and background commands
-   - **`cot_reasoning`**: Model's internal Chain of Thought thinking blocks
-   - **`tool_outputs`**: Tool calls (JSON arguments) and execution stdout/stderr results
-   - **`assistant_responses`**: Final markdown responses returned by the model
-   - **`system_history`**: Recent conversation summaries and knowledge items
+This section provides a rigorous mathematical and algorithmic explanation of how every metric, number, and counter displayed across `gmon` is obtained and calculated.
 
 ---
+
+### 3.1 Character Counts & Token Estimation (BPE Ratio)
+
+Antigravity logs raw string payloads in `transcript_full.jsonl` and SQLite blobs, but does not serialize raw BPE token IDs directly into JSON keys. `gmon` calculates token metrics using the industry-standard Byte-Pair Encoding (BPE) ratio for modern frontier LLMs (Gemini, Claude, GPT-4):
+
+1. **Character Counts ($\text{chars}$)**:
+   $$\text{chars} = \text{length}(S)$$
+   Measured across UTF-8 encoded text for system instructions, tool schemas, user requests, CoT thinking, tool results, and assistant messages.
+
+2. **Estimated Token Counts ($\text{tokens}$)**:
+   Frontier tokenizers average **~4 characters per token** for natural language and markdown, and ~3.2 to 4.0 characters per token for source code and JSON. `gmon` applies ceiling division:
+   $$\text{tokens} = \left\lceil \frac{\text{chars}}{4.0} \right\rceil = \left\lfloor \frac{\text{chars} + 3}{4} \right\rfloor$$
+
+---
+
+### 3.2 Active Context Window vs. Cumulative Session Tokens
+
+Antigravity operates a dynamic sliding context window with state compaction:
+
+1. **Compaction Boundary Identification ($C_{\text{latest}}$)**:
+   - `gmon` scans the conversation trajectory for compaction records:
+     $$\mathcal{C} = \{ s \mid \text{record}[s].\text{type} == \text{"CHECKPOINT"} \}$$
+   - The active context boundary $C_{\text{latest}}$ is the maximum step in $\mathcal{C}$ (or $0$ if uncompacted):
+     $$C_{\text{latest}} = \max(\mathcal{C}) \quad (\text{or } 0 \text{ if } \mathcal{C} = \emptyset)$$
+
+2. **Active Context Tokens ($\text{Tokens}_{\text{active}}$)**:
+   - Represents the exact volume of tokens currently loaded into Gemini's active attention window.
+   - Any message frames with $\text{step\_index} < C_{\text{latest}}$ have been pruned away from model memory and are excluded:
+     $$\text{Tokens}_{\text{active}} = \text{Tokens}_{\text{system}} + \text{Tokens}_{\text{tools}} + \sum_{f \in \text{Frames}, \, f.\text{step\_index} \ge C_{\text{latest}}} f.\text{est\_tokens}$$
+
+3. **Cumulative Session Tokens ($\text{Tokens}_{\text{session}}$)**:
+   - Measures the total lifetime compute and context generated across the entire session lifecycle, preserving all pre-compaction turns:
+     $$\text{Tokens}_{\text{session}} = \text{Tokens}_{\text{system}} + \text{Tokens}_{\text{tools}} + \sum_{f \in \text{All Frames}} f.\text{est\_tokens}$$
+
+---
+
+### 3.3 Semantic Category Classification & Percentage Breakdown
+
+Every message frame, system directive, and tool schema is classified into one of 8 mutually exclusive categories:
+
+| Category Key | Display Label | Origin & Extraction Source |
+| :--- | :--- | :--- |
+| `system_instruction` | 🧠 System Prompt & Guidelines | Static base persona, identity, behavioral guidelines, and rules parsed from protobuf generation snapshots or system prefix. |
+| `skills_plugins` | 🧩 Skills & Plugins Catalog | Custom skills and plugins injected into `<skills>...</skills>` and `<plugins>...</plugins>` tags. |
+| `tool_declarations` | 🛠️ Tool Declarations | JSON parameter schemas and descriptions of all tools exposed to the agent. |
+| `compaction_summary` | ⚙️ Compaction Summary | `# Resuming from a compaction` state summaries injected at `CHECKPOINT` steps. |
+| `user_prompts` | 👤 User Requests & IDE State | User text (`<USER_REQUEST>`), active document, cursor line, open tabs, and running terminal commands (`<ADDITIONAL_METADATA>`). |
+| `cot_reasoning` | 🧠 Chain of Thought | Internal reasoning tokens extracted from the `thinking` field of `PLANNER_RESPONSE` steps. |
+| `tool_outputs` | 🛠️ Tool Calls & Results | JSON tool call proposals (`tool_calls`) plus execution outputs/stdout/stderr from tool execution steps (`RUN_COMMAND`, `VIEW_FILE`, etc.). |
+| `assistant_responses` | 🤖 Assistant Responses | User-facing formatted markdown messages returned by the model. |
+| `system_history` | 📜 Conversation History & KIs | Injected past conversation summaries (`<conversation_summaries>`) and matched knowledge items (`<knowledge_items>`). |
+
+**Category Percentage Calculation**:
+$$\text{Percentage}(c) = \frac{\text{Tokens}(c)}{\text{Tokens}_{\text{active}}} \times 100\%$$
+
+---
+
+### 3.4 Step-by-Step Time-Series Evolution Math
+
+For each step $t \in [0, N]$:
+
+1. **Step Delta ($\Delta_t$)**:
+   $$\Delta_t = \sum_{f \in \text{Frames}(t)} f.\text{est\_tokens}$$
+
+2. **Active Tokens at Step $t$ ($\text{Active}(t)$)**:
+   - If step $t$ is a compaction checkpoint ($t \in \mathcal{C}$):
+     $$\text{Active}(t) = \text{Tokens}_{\text{system}} + \text{Tokens}_{\text{tools}} + \text{Tokens}_{\text{compaction\_summary}}(t)$$
+   - If step $t$ is a normal step ($t \notin \mathcal{C}$):
+     $$\text{Active}(t) = \text{Active}(t-1) + \Delta_t$$
+
+3. **Cumulative Tokens at Step $t$ ($\text{Cumulative}(t)$)**:
+   $$\text{Cumulative}(t) = \text{Tokens}_{\text{system}} + \text{Tokens}_{\text{tools}} + \sum_{i=0}^t \Delta_i$$
+
+---
+
+### 3.5 Latency, Timings & Analytics Counters
+
+1. **Step Timestamps**: Parsed from ISO 8601 UTC strings (`created_at`). Displayed formatted in user local time (`HH:MM:SS`).
+2. **Tool Execution Latencies**: Captured by the IDE runtime and extracted from `duration_seconds` or elapsed step deltas (e.g. `⏱️ 1.2s`).
+3. **Chain of Thought Latencies**: Inferred duration of model inference token streaming.
+4. **Tool Invocations Histogram**:
+   $$\text{ToolCount}(\text{tool\_name}) = \sum \mathbb{I}(\text{tc.name} == \text{tool\_name})$$
+5. **Touched Files Tracker**:
+   - Parsed by analyzing arguments (`AbsolutePath`, `TargetFile`, `CommandLine` file patterns) across `write_to_file` (create), `replace_file_content` (modify), and `run_command` operations.
+6. **Error Counts**:
+   - Incremented when `step.status == "ERROR"`, `exit_code != 0`, or tool stderr contains execution failures.
+7. **Model Name Detection**:
+   - Regex parsed from `USER_SETTINGS_CHANGE` logs:
+     $$\text{Pattern: } \texttt{Changed setting \`Model Selection\` from \S+ to ([^.]+?)\.}$$
+   - Accurately captures exact decimal version strings (e.g., `Gemini 3.8 Flash (Medium)`, `Gemini 3.7 Flash (Medium)`).
+
+---
+
 
 ## 4. Agent Execution Lifecycle & Step Types (Remote vs. Local)
 
