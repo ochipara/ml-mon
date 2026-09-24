@@ -45,6 +45,7 @@
           <span class="search-icon">🔍</span>
           <input type="text" id="session-search" placeholder="Search sessions..." oninput="filterSessions()">
         </div>
+        <button class="btn-help-trigger" onclick="openHelpModal()" title="View Agent Architecture & Execution Sequence Guide">❓ Architecture & Help</button>
       </div>
     </header>
 
@@ -388,6 +389,122 @@
         <button class="fab-scroll-bottom" id="fab-scroll-prompt" onclick="scrollToViewBottom('prompt-view-container')" title="Jump to End">⬇️</button>
       </section>
     </main>
+  </div>
+
+  <!-- Architecture & Help Modal -->
+  <div class="modal-overlay" id="help-modal-overlay" onclick="handleModalOverlayClick(event)">
+    <div class="modal-card" id="help-modal-card">
+      <div class="modal-header">
+        <h2>⚡ Antigravity Agent Lifecycle & Architecture</h2>
+        <button class="modal-close-btn" onclick="closeHelpModal()" title="Close (Esc)">✕</button>
+      </div>
+      <div class="modal-content">
+        <!-- Section 1: Remote vs Local -->
+        <div class="help-section">
+          <h3>🌐 Remote LLM vs. 💻 Local IDE Execution</h3>
+          <p>Not every step in an agent session is a network roundtrip to the remote model. The agent loop alternates between <strong>purely local IDE operations</strong> and <strong>remote LLM inferences</strong>:</p>
+          <table class="help-table">
+            <thead>
+              <tr>
+                <th>Step Type</th>
+                <th>Origin / Source</th>
+                <th>Location</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Chain of Thought (CoT)</strong></td>
+                <td><code>MODEL</code> / <code>PLANNER_RESPONSE</code></td>
+                <td><span class="badge-remote">🌐 Remote</span></td>
+                <td>Gemini generates internal reasoning & planning tokens.</td>
+              </tr>
+              <tr>
+                <td><strong>Tool Proposals</strong></td>
+                <td><code>MODEL</code> / <code>PLANNER_RESPONSE</code></td>
+                <td><span class="badge-remote">🌐 Remote</span></td>
+                <td>Gemini requests a tool call (e.g. <code>run_command</code>, <code>view_file</code>) with JSON args.</td>
+              </tr>
+              <tr>
+                <td><strong>Assistant Response</strong></td>
+                <td><code>MODEL</code> / <code>PLANNER_RESPONSE</code></td>
+                <td><span class="badge-remote">🌐 Remote</span></td>
+                <td>Gemini returns final markdown answer to user.</td>
+              </tr>
+              <tr>
+                <td><strong>User Request</strong></td>
+                <td><code>USER_EXPLICIT</code> / <code>USER_INPUT</code></td>
+                <td><span class="badge-local">💻 Local</span></td>
+                <td>IDE captures your prompt, open tabs, cursor position, and terminal state.</td>
+              </tr>
+              <tr>
+                <td><strong>Conversation History</strong></td>
+                <td><code>SYSTEM</code> / <code>CONVERSATION_HISTORY</code></td>
+                <td><span class="badge-local">💻 Local</span></td>
+                <td>IDE indexes and formats past conversation summaries from disk.</td>
+              </tr>
+              <tr>
+                <td><strong>Knowledge Items</strong></td>
+                <td><code>SYSTEM</code> / <code>KNOWLEDGE_ARTIFACTS</code></td>
+                <td><span class="badge-local">💻 Local</span></td>
+                <td>IDE queries local Knowledge Items database for matches.</td>
+              </tr>
+              <tr>
+                <td><strong>Tool Result Execution</strong></td>
+                <td><code>SYSTEM</code> / <code>RUN_COMMAND</code> etc.</td>
+                <td><span class="badge-local">💻 Local</span></td>
+                <td>IDE executes shell commands or edits files on your host Mac. Model is idle.</td>
+              </tr>
+              <tr>
+                <td><strong>Compaction Checkpoints</strong></td>
+                <td><code>SYSTEM</code> / <code>CHECKPOINT</code></td>
+                <td><span class="badge-local">💻 Local</span></td>
+                <td>IDE runtime prunes older turns and resets active context to a summary.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Section 2: Sequence Diagram -->
+        <div class="help-section">
+          <h3>🔄 Agent Turn Execution Sequence</h3>
+          <p>Here is how a turn flows between the user, the local IDE runtime, and the remote Gemini LLM:</p>
+          <div class="sequence-flow">
+            <div class="flow-step local">
+              <span class="flow-step-num">Step 0 💻</span>
+              <div class="flow-step-desc"><strong>User Prompt:</strong> You submit a prompt. The IDE gathers active document, cursor line, and open workspace metadata.</div>
+            </div>
+            <div class="flow-step local">
+              <span class="flow-step-num">Steps 1-2 💻</span>
+              <div class="flow-step-desc"><strong>Context Assembly:</strong> IDE injects recent conversation history summaries and matches knowledge items from local cache.</div>
+            </div>
+            <div class="flow-step remote">
+              <span class="flow-step-num">Step 3 🌐</span>
+              <div class="flow-step-desc"><strong>Remote Model Call:</strong> Active context is sent to Gemini. Model streams back <strong>Chain of Thought</strong> + requests a <strong>Tool Call</strong> (e.g. <code>list_dir</code>).</div>
+            </div>
+            <div class="flow-step local">
+              <span class="flow-step-num">Step 4 💻</span>
+              <div class="flow-step-desc"><strong>Local Tool Execution:</strong> IDE runs the command/tool on your Mac filesystem and captures stdout/stderr.</div>
+            </div>
+            <div class="flow-step remote">
+              <span class="flow-step-num">Step 5 🌐</span>
+              <div class="flow-step-desc"><strong>Model Feedback:</strong> IDE sends tool output to Gemini. Model reasons further and proposes next tool (e.g. <code>view_file</code>).</div>
+            </div>
+            <div class="flow-step remote">
+              <span class="flow-step-num">Final 🌐</span>
+              <div class="flow-step-desc"><strong>Assistant Response:</strong> When finished, Gemini generates the final response rendered in the chat window.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 3: Context Evolution & Compaction -->
+        <div class="help-section">
+          <h3>⚡ Context Window Evolution & Compaction</h3>
+          <p><strong>Active Window (Sawtooth):</strong> Measures tokens in the LLM's active attention window. Each tool output adds tokens. When the context budget is reached, a <strong>compaction checkpoint</strong> drops older turns, creating a sharp cliff drop back down to the baseline summary.</p>
+          <p style="margin-top: 8px;"><strong>Cumulative Session:</strong> Monotonically tracks total context processed across the entire conversation history.</p>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/static/app.js"></script>

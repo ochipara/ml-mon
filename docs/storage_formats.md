@@ -146,3 +146,43 @@ Antigravity logs the full text payload of every message frame into `transcript_f
    - **`assistant_responses`**: Final markdown responses returned by the model
    - **`system_history`**: Recent conversation summaries and knowledge items
 
+---
+
+## 4. Agent Execution Lifecycle & Step Types (Remote vs. Local)
+
+Not every step in `transcript.jsonl` is a call to the remote LLM. The agent operates in an alternating loop between **Purely Local IDE Operations** and **Remote LLM Inferences**.
+
+### Step Classification Table
+
+| Step Type | `source` | `type` | Execution Location | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Model Generation / CoT** | `"MODEL"` | `"PLANNER_RESPONSE"` | 🌐 **Remote LLM** (Gemini API) | Sends active context to Gemini; receives Chain of Thought (`thinking`), tool proposals (`tool_calls`), or final assistant response (`content`). |
+| **User Request** | `"USER_EXPLICIT"` | `"USER_INPUT"` | 💻 **Purely Local** | IDE captures user prompt, open files, cursor location, and background processes. |
+| **Conversation History** | `"SYSTEM"` | `"CONVERSATION_HISTORY"` | 💻 **Purely Local** | IDE indexes past conversation metadata and prepares context summaries. |
+| **Knowledge Items** | `"SYSTEM"` | `"KNOWLEDGE_ARTIFACTS"` | 💻 **Purely Local** | IDE queries local knowledge database (`~/.gemini/.../knowledge/`). |
+| **Tool Execution** | `"SYSTEM"` / Tool | `"RUN_COMMAND"`, `"VIEW_FILE"`, etc. | 💻 **Purely Local** | IDE executes shell commands, file edits, or directory listings locally on the Mac host. |
+| **Compaction Checkpoints** | `"SYSTEM"` | `"CHECKPOINT"` | 💻 **Purely Local** | Local runtime summarizes older turns when active context nears the budget limit. |
+
+### Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User (IDE)
+    participant IDE as Local IDE Runtime
+    participant Model as Remote LLM (Gemini)
+
+    User->>IDE: 1. Types prompt (USER_INPUT) [Local]
+    IDE->>IDE: 2. Injects history & Knowledge Items (Steps 1 & 2) [Local]
+    IDE->>Model: 3. Dispatches active context window to Gemini
+    Note over Model: Generates CoT reasoning & tool arguments
+    Model-->>IDE: 4. Returns CoT + tool_call: list_dir (PLANNER_RESPONSE) [Remote 🌐]
+    IDE->>IDE: 5. Executes list_dir on host filesystem (TOOL_RESULT) [Local 💻]
+    IDE->>Model: 6. Sends tool output back to model
+    Model-->>IDE: 7. Returns CoT + tool_call: view_file (PLANNER_RESPONSE) [Remote 🌐]
+    IDE->>IDE: 8. Reads file from disk (TOOL_RESULT) [Local 💻]
+    IDE->>Model: 9. Sends file contents back to model
+    Model-->>IDE: 10. Returns final Assistant Response (PLANNER_RESPONSE) [Remote 🌐]
+    IDE->>User: 11. Displays formatted markdown response in chat
+```
+
