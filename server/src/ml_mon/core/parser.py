@@ -624,14 +624,81 @@ class ConversationParser:
                 )
                 frame_idx += 1
 
-        active_frames = [f for f in frames if f.is_active]
+        # Check if we have raw prompt snapshots from SQLite gen_metadata
+        has_prompt_snapshot = False
+        sys_tokens = 0
+        sys_chars = 0
+        tool_tokens = 0
+        tool_chars = 0
+
+        try:
+            from ml_mon.core.prompt_reconstructor import PromptReconstructor
+            reconstructor = PromptReconstructor(self.config)
+            prompt_rec = reconstructor.reconstruct(conversation_id)
+            if prompt_rec and prompt_rec.tools:
+                has_prompt_snapshot = True
+                for sec in prompt_rec.sections:
+                    if sec.category in ("system_instruction", "skills_plugins"):
+                        sys_tokens += sec.est_tokens
+                        sys_chars += sec.char_count
+                    elif sec.category == "tools":
+                        tool_tokens += sec.est_tokens
+                        tool_chars += sec.char_count
+        except Exception:
+            pass
+
+        # Insert baseline frames at the beginning if present
+        all_frames: list[ContextFrame] = []
+        if has_prompt_snapshot and sys_tokens > 0:
+            all_frames.append(
+                ContextFrame(
+                    index=0,
+                    step_index=0,
+                    source="SYSTEM",
+                    frame_type="SYSTEM_PROMPT",
+                    category="system_instruction",
+                    title="🧠 System Persona & Skill Instructions",
+                    char_count=sys_chars,
+                    est_tokens=sys_tokens,
+                    is_active=True,
+                    preview="Base Antigravity agent identity, guidelines, and skills/plugins catalog.",
+                    full_content="[Extracted from generation snapshot in SQLite gen_metadata]",
+                )
+            )
+
+        if has_prompt_snapshot and tool_tokens > 0:
+            all_frames.append(
+                ContextFrame(
+                    index=len(all_frames),
+                    step_index=0,
+                    source="SYSTEM",
+                    frame_type="TOOL_DECLARATIONS",
+                    category="tool_declarations",
+                    title="🛠️ Tool Function Declarations & JSON Schemas",
+                    char_count=tool_chars,
+                    est_tokens=tool_tokens,
+                    is_active=True,
+                    preview="Function declarations and parameters schemas for available IDE tools.",
+                    full_content="[Extracted from generation snapshot in SQLite gen_metadata]",
+                )
+            )
+
+        # Shift existing frame indices
+        offset = len(all_frames)
+        for f in frames:
+            f.index += offset
+            all_frames.append(f)
+
+        active_frames = [f for f in all_frames if f.is_active]
         total_active_chars = sum(f.char_count for f in active_frames)
         total_active_tokens = sum(f.est_tokens for f in active_frames)
-        total_session_chars = sum(f.char_count for f in frames)
-        total_session_tokens = sum(f.est_tokens for f in frames)
+        total_session_chars = sum(f.char_count for f in all_frames)
+        total_session_tokens = sum(f.est_tokens for f in all_frames)
 
         # Build usage breakdown for active context
         categories_def = [
+            ("system_instruction", "System Persona & Skills"),
+            ("tool_declarations", "Tool Declarations & Schemas"),
             ("compaction_summary", "Checkpoint & Compaction"),
             ("user_prompts", "User Requests & IDE Context"),
             ("cot_reasoning", "Chain of Thought (CoT)"),
@@ -664,7 +731,10 @@ class ConversationParser:
             total_active_tokens=total_active_tokens,
             total_session_chars=total_session_chars,
             total_session_tokens=total_session_tokens,
+            has_prompt_snapshot=has_prompt_snapshot,
+            system_prompt_tokens=sys_tokens,
+            tool_declarations_tokens=tool_tokens,
             breakdown=breakdowns,
-            frames=frames,
+            frames=all_frames,
         )
 

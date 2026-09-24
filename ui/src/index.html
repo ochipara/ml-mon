@@ -70,6 +70,7 @@
           <button class="tab-btn" id="tab-media" onclick="switchTab('media')">🖼️ Media & Logs <span class="tab-counter" id="cnt-media">0</span></button>
           <button class="tab-btn" id="tab-context" onclick="switchTab('context')">📊 IDE Context</button>
           <button class="tab-btn" id="tab-usage" onclick="switchTab('usage')">🔍 Context & Usage</button>
+          <button class="tab-btn" id="tab-prompt" onclick="switchTab('prompt')">📄 Full Prompt</button>
         </div>
       </header>
 
@@ -284,6 +285,69 @@
           </div>
         </div>
         <button class="fab-scroll-bottom" id="fab-scroll-usage" onclick="scrollToViewBottom('usage-view-container')" title="Jump to End">⬇️</button>
+      </section>
+
+      <!-- View 7: Full Prompt Reconstruction -->
+      <section class="tab-view" id="view-prompt">
+        <div class="prompt-view-container" id="prompt-view-container" onscroll="handleViewScroll(this, 'fab-scroll-prompt')">
+          <div class="view-panel-header">
+            <div class="prompt-header-row">
+              <div>
+                <h2>📄 Full LLM Prompt Inspector & Reconstructor</h2>
+                <p class="dim-text">Reconstructed snapshot of the complete prompt payload sent to the LLM (system persona, tool schemas, skills catalog, compaction memory, and conversation history).</p>
+              </div>
+              <div class="prompt-actions-group">
+                <button class="action-btn-styled" id="btn-copy-prompt" onclick="copyFullPrompt()">
+                  <span id="copy-prompt-icon">📋</span> <span id="copy-prompt-text">Copy Full Prompt</span>
+                </button>
+                <a class="action-btn-styled" id="btn-download-prompt" href="#" target="_blank" download>
+                  <span>⬇️</span> Download Prompt (.txt)
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Metrics Bar -->
+          <div class="usage-stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">TOTAL PROMPT TOKENS</div>
+              <div class="stat-val pink" id="prompt-total-tokens">0</div>
+              <div class="stat-sub dim-text" id="prompt-total-chars">0 characters</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">SYSTEM & SKILLS</div>
+              <div class="stat-val purple" id="prompt-system-tokens">0</div>
+              <div class="stat-sub dim-text" id="prompt-system-chars">0 characters</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">TOOL SCHEMAS</div>
+              <div class="stat-val blue" id="prompt-tools-tokens">0</div>
+              <div class="stat-sub dim-text" id="prompt-tools-count">0 tools declared</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">MEMORY & TRAJECTORY</div>
+              <div class="stat-val yellow" id="prompt-history-tokens">0</div>
+              <div class="stat-sub dim-text" id="prompt-history-chars">0 characters</div>
+            </div>
+          </div>
+
+          <!-- Quick Jump Navigation Pills & Search -->
+          <div class="prompt-toolbar">
+            <div class="prompt-section-pills" id="prompt-section-pills">
+              <!-- Rendered dynamically -->
+            </div>
+            <div class="filter-search" style="width: 320px;">
+              <span class="filter-search-icon">🔍</span>
+              <input type="text" id="prompt-search" placeholder="Search prompt text or tool name..." oninput="filterPromptContent()">
+            </div>
+          </div>
+
+          <!-- Sections List (Collapsible Cards) -->
+          <div class="prompt-sections-list" id="prompt-sections-list">
+            <div class="loading-placeholder">Loading full prompt snapshot...</div>
+          </div>
+        </div>
+        <button class="fab-scroll-bottom" id="fab-scroll-prompt" onclick="scrollToViewBottom('prompt-view-container')" title="Jump to End">⬇️</button>
       </section>
     </main>
   </div>

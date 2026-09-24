@@ -459,6 +459,102 @@ def context_cmd(ctx: click.Context, conversation_id: str, all_frames: bool, json
     console.print(frames_table)
 
 
+@main.command("prompt")
+@click.argument("conversation_id", default="latest")
+@click.option("--section", "-s", type=click.Choice(["all", "system", "tools", "skills", "memory", "history"]), default="all", help="Display only a specific prompt section")
+@click.option("--raw", is_flag=True, help="Print raw plaintext prompt without Rich formatting")
+@click.option("--json-out", is_flag=True, help="Output reconstructed prompt as structured JSON")
+@click.option("--save-to", "-o", type=click.Path(), default=None, help="Save reconstructed prompt to file")
+@click.pass_context
+def prompt(ctx: click.Context, conversation_id: str, section: str, raw: bool, json_out: bool, save_to: Optional[str]):
+    """📄 Reconstruct the complete model prompt with system instructions, tools, and history."""
+    config: AntigravityConfig = ctx.obj["config"]
+    scanner = ConversationScanner(config)
+
+    if conversation_id.lower() == "latest":
+        summaries = scanner.scan_all()
+        if not summaries:
+            console.print("[red]No conversations found.[/red]")
+            return
+        conv_summary = summaries[0]
+        conversation_id = conv_summary.id
+    else:
+        conv_summary = scanner.get_summary(conversation_id)
+        if not conv_summary:
+            console.print(f"[red]Conversation '{conversation_id}' not found.[/red]")
+            return
+
+    from ml_mon.core.prompt_reconstructor import PromptReconstructor
+    reconstructor = PromptReconstructor(config)
+    reconstructed = reconstructor.reconstruct(conversation_id)
+
+    if not reconstructed:
+        console.print(f"[red]Unable to reconstruct prompt for '{conversation_id}'.[/red]")
+        return
+
+    if save_to:
+        Path(save_to).write_text(reconstructed.raw_prompt_text, encoding="utf-8")
+        console.print(f"[green]Saved raw prompt to:[/green] {save_to}")
+
+    if json_out:
+        import sys
+        sys.stdout.write(reconstructed.model_dump_json(indent=2) + "\n")
+        return
+
+    if raw:
+        import sys
+        if section == "all":
+            sys.stdout.write(reconstructed.raw_prompt_text + "\n")
+        else:
+            sec_map = {
+                "system": "sec-base-persona",
+                "skills": "sec-skills-plugins",
+                "tools": "sec-tool-declarations",
+                "memory": "sec-compaction-memory",
+                "history": "sec-dynamic-history",
+            }
+            target_id = sec_map.get(section)
+            sec = next((s for s in reconstructed.sections if s.id == target_id), None)
+            if sec:
+                sys.stdout.write(sec.content + "\n")
+            else:
+                console.print(f"[yellow]Section '{section}' not found in prompt.[/yellow]")
+        return
+
+    # Rich formatted overview
+    title_text = f"📄 Reconstructed Model Prompt — {conv_summary.title or conversation_id[:8]}"
+    summary_panel = Panel(
+        f"  [bold]Conversation ID:[/bold]     [cyan]{conversation_id}[/cyan]\n"
+        f"  [bold]Target Model:[/bold]        [yellow]{reconstructed.model_name or 'Gemini'}[/yellow]\n"
+        f"  [bold]Snapshot Step:[/bold]       [white]Step {reconstructed.snapshot_step}[/white]\n"
+        f"  [bold]Total Payload Size:[/bold]  [bold green]{reconstructed.total_chars:,} chars[/bold green] (~[bold yellow]{reconstructed.total_est_tokens:,} tokens[/bold yellow])\n"
+        f"  [bold]Declared Tools:[/bold]      [cyan]{len(reconstructed.tools)} IDE tools registered[/cyan]\n"
+        f"  [bold]Semantic Sections:[/bold]   [white]{len(reconstructed.sections)} sections reconstructed[/white]",
+        title=title_text,
+        border_style="magenta",
+        box=box.ROUNDED,
+    )
+    console.print(summary_panel)
+
+    table = Table(title="Prompt Component Breakdown", box=box.ROUNDED, header_style="bold cyan")
+    table.add_column("Section", style="white")
+    table.add_column("Category", style="dim")
+    table.add_column("Characters", justify="right", style="cyan")
+    table.add_column("Tokens", justify="right", style="bold yellow")
+    table.add_column("Share", justify="right", style="green")
+
+    for s in reconstructed.sections:
+        pct = (s.est_tokens / reconstructed.total_est_tokens) * 100 if reconstructed.total_est_tokens > 0 else 0
+        table.add_row(
+            s.title,
+            s.category,
+            f"{s.char_count:,}",
+            f"{s.est_tokens:,}",
+            f"{pct:.1f}%",
+        )
+    console.print(table)
+
+
 @main.command("serve")
 @click.option("--host", default="127.0.0.1", help="Host interface to bind to (default: 127.0.0.1)")
 @click.option("--port", "-p", default=8765, help="Port to listen on (default: 8765)")

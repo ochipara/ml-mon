@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from ml_mon.config import AntigravityConfig
@@ -85,6 +85,41 @@ def create_app(config: Optional[AntigravityConfig] = None) -> FastAPI:
         if not report:
             raise HTTPException(status_code=404, detail=f"Context for conversation {conversation_id} not found")
         return report.model_dump()
+
+    @app.get("/api/conversations/{conversation_id}/prompt")
+    async def get_conversation_prompt(conversation_id: str):
+        """Return the reconstructed full prompt and semantic sections."""
+        if conversation_id.lower() == "latest":
+            summaries = scanner.scan_all()
+            if not summaries:
+                raise HTTPException(status_code=404, detail="No conversations found")
+            conversation_id = summaries[0].id
+
+        from ml_mon.core.prompt_reconstructor import PromptReconstructor
+        reconstructor = PromptReconstructor(cfg)
+        prompt = reconstructor.reconstruct(conversation_id)
+        if not prompt:
+            raise HTTPException(status_code=404, detail=f"Unable to reconstruct prompt for {conversation_id}")
+        return prompt.model_dump()
+
+    @app.get("/api/conversations/{conversation_id}/prompt/raw", response_class=PlainTextResponse)
+    async def get_conversation_prompt_raw(conversation_id: str, download: bool = False):
+        """Return the raw reconstructed prompt text."""
+        if conversation_id.lower() == "latest":
+            summaries = scanner.scan_all()
+            if not summaries:
+                raise HTTPException(status_code=404, detail="No conversations found")
+            conversation_id = summaries[0].id
+
+        from ml_mon.core.prompt_reconstructor import PromptReconstructor
+        reconstructor = PromptReconstructor(cfg)
+        prompt = reconstructor.reconstruct(conversation_id)
+        if not prompt:
+            raise HTTPException(status_code=404, detail=f"Unable to reconstruct prompt for {conversation_id}")
+        headers = {}
+        if download:
+            headers["Content-Disposition"] = f'attachment; filename="prompt_{conversation_id[:8]}.txt"'
+        return PlainTextResponse(content=prompt.raw_prompt_text, headers=headers)
 
     @app.get("/api/conversations/{conversation_id}/stream")
     async def stream_conversation(conversation_id: str):

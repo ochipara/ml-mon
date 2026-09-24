@@ -5,6 +5,7 @@ let currentEventSource = null;
 let allSessions = [];
 let currentSessionDetail = null;
 let currentContextReport = null;
+let currentPromptSnapshot = null;
 let contextBarMode = "relative";
 let contextCapacityLimit = 1000000;
 const renderedStepIds = new Set();
@@ -201,6 +202,11 @@ async function selectSession(sessionId) {
     // 7. If on Context & Usage tab, load it
     if (document.getElementById("tab-usage") && document.getElementById("tab-usage").classList.contains("active")) {
       loadContextWindow(sessionId);
+    }
+
+    // 8. If on Full Prompt tab, load it
+    if (document.getElementById("tab-prompt") && document.getElementById("tab-prompt").classList.contains("active")) {
+      loadPromptView(sessionId);
     }
 
     // Apply active filters
@@ -688,6 +694,11 @@ function switchTab(tab) {
     document.getElementById("view-usage").classList.add("active");
     if (filterBar) filterBar.style.display = "none";
     loadContextWindow(activeSessionId);
+  } else if (tab === "prompt") {
+    document.getElementById("tab-prompt").classList.add("active");
+    document.getElementById("view-prompt").classList.add("active");
+    if (filterBar) filterBar.style.display = "none";
+    loadPromptView(activeSessionId);
   }
 }
 
@@ -776,6 +787,8 @@ function renderStackedUsageBar() {
   if (!barEl || !legendEl) return;
 
   const catColors = {
+    system_instruction: "#ec4899",
+    tool_declarations: "#8b5cf6",
     compaction_summary: "#9ca3af",
     user_prompts: "#10b981",
     cot_reasoning: "#a855f7",
@@ -920,6 +933,241 @@ function filterContextFrames() {
   }).join("");
 }
 
+// ==========================================
+// Full Prompt View & Reconstructor Functions
+// ==========================================
+
+async function loadPromptView(sessionId) {
+  if (!sessionId) return;
+  const listEl = document.getElementById("prompt-sections-list");
+  if (!listEl) return;
+  listEl.innerHTML = '<div class="loading-placeholder">Reconstructing full model prompt snapshot...</div>';
+
+  const downloadBtn = document.getElementById("btn-download-prompt");
+  if (downloadBtn) {
+    downloadBtn.href = `/api/conversations/${sessionId}/prompt/raw?download=true`;
+  }
+
+  try {
+    const res = await fetch(`/api/conversations/${sessionId}/prompt`);
+    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+    const snapshot = await res.json();
+    currentPromptSnapshot = snapshot;
+
+    // 1. Metric Cards
+    const totalToks = snapshot.total_est_tokens || snapshot.est_tokens || 0;
+    const totalChars = snapshot.total_chars || snapshot.total_characters || 0;
+    document.getElementById("prompt-total-tokens").innerText = totalToks.toLocaleString();
+    document.getElementById("prompt-total-chars").innerText = `${totalChars.toLocaleString()} characters`;
+
+    const sysSec = snapshot.sections.find(s => s.category === "system_instruction");
+    const skillsSec = snapshot.sections.find(s => s.category === "skills_plugins");
+    const sysTokens = (sysSec?.est_tokens || 0) + (skillsSec?.est_tokens || 0);
+    const sysChars = (sysSec?.char_count || 0) + (skillsSec?.char_count || 0);
+    document.getElementById("prompt-system-tokens").innerText = sysTokens.toLocaleString();
+    document.getElementById("prompt-system-chars").innerText = `${sysChars.toLocaleString()} characters`;
+
+    const toolsSec = snapshot.sections.find(s => s.category === "tools");
+    document.getElementById("prompt-tools-tokens").innerText = (toolsSec?.est_tokens || 0).toLocaleString();
+    document.getElementById("prompt-tools-count").innerText = `${snapshot.tools?.length || 0} tools declared`;
+
+    const compSec = snapshot.sections.find(s => s.category === "environment_memory");
+    const histSec = snapshot.sections.find(s => s.category === "conversation_history");
+    const histTokens = (compSec?.est_tokens || 0) + (histSec?.est_tokens || 0);
+    const histChars = (compSec?.char_count || 0) + (histSec?.char_count || 0);
+    document.getElementById("prompt-history-tokens").innerText = histTokens.toLocaleString();
+    document.getElementById("prompt-history-chars").innerText = `${histChars.toLocaleString()} characters`;
+
+    // 2. Render Section Quick Jump Pills
+    renderPromptPills();
+
+    // 3. Render Collapsible Section Cards
+    renderPromptSections(snapshot.sections);
+  } catch (err) {
+    listEl.innerHTML = `<div class="empty-state">Failed to reconstruct full prompt: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderPromptPills() {
+  const pillsEl = document.getElementById("prompt-section-pills");
+  if (!pillsEl || !currentPromptSnapshot) return;
+
+  const pillIcons = {
+    system_instruction: "🧠",
+    skills_plugins: "🧩",
+    tools: "🛠️",
+    environment_memory: "⚙️",
+    conversation_history: "💬",
+  };
+
+  pillsEl.innerHTML = currentPromptSnapshot.sections.map((s) => {
+    const icon = pillIcons[s.category] || "📄";
+    return `
+      <button class="prompt-pill" onclick="scrollToPromptSection('${s.id}')" title="Jump to ${escapeHtml(s.title)}">
+        <span>${icon}</span>
+        <span>${escapeHtml(s.title)}</span>
+        <span class="pill-tokens">(${s.est_tokens.toLocaleString()}t)</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function renderPromptSections(sections) {
+  const listEl = document.getElementById("prompt-sections-list");
+  if (!listEl) return;
+
+  if (!sections || sections.length === 0) {
+    listEl.innerHTML = '<div class="empty-state">No prompt snapshot data found for this session.</div>';
+    return;
+  }
+
+  listEl.innerHTML = sections.map((sec, idx) => {
+    const cardId = `prompt-card-${sec.id}`;
+    // Expand the first section by default
+    const isExpanded = idx === 0;
+    const collapsedClass = isExpanded ? "" : "collapsed";
+
+    let extraContent = "";
+    if (sec.category === "tools" && currentPromptSnapshot.tools && currentPromptSnapshot.tools.length > 0) {
+      extraContent = `
+        <div style="margin-bottom: 16px;">
+          <h4 style="font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">Structured Tool Schemas (${currentPromptSnapshot.tools.length})</h4>
+          <div class="tool-schema-list">
+            ${currentPromptSnapshot.tools.map(tool => {
+              const toolId = `tool-schema-${tool.name}`;
+              return `
+                <div class="tool-schema-card collapsed" id="${toolId}">
+                  <div class="tool-schema-header" onclick="toggleToolSchema('${tool.name}')">
+                    <div>
+                      <span class="tool-schema-name">${escapeHtml(tool.name)}</span>
+                      <div class="tool-schema-desc">${escapeHtml(tool.description)}</div>
+                    </div>
+                    <span class="prompt-card-chevron tool-schema-chevron">▼</span>
+                  </div>
+                  <div class="tool-schema-body">
+                    <pre><code>${escapeHtml(JSON.stringify(tool.parameters_schema || {}, null, 2))}</code></pre>
+                  </div>
+                </div>
+              `;
+            }).join("")}
+          </div>
+        </div>
+        <h4 style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">Raw Declarations Text</h4>
+      `;
+    }
+
+    return `
+      <div class="prompt-card ${collapsedClass}" id="${cardId}">
+        <div class="prompt-card-header" onclick="togglePromptSection('${sec.id}')">
+          <div class="prompt-card-title-group">
+            <span class="prompt-card-chevron">▼</span>
+            <span class="prompt-card-title">${escapeHtml(sec.title)}</span>
+            <span class="prompt-card-badge">${escapeHtml(sec.category)}</span>
+          </div>
+          <div class="prompt-card-actions" onclick="event.stopPropagation()">
+            <span class="prompt-token-pill">⚡ ${(sec.est_tokens || 0).toLocaleString()} tokens</span>
+            <span class="dim-text" style="font-size: 12px;">${(sec.char_count || 0).toLocaleString()} chars</span>
+            <button class="btn-card-copy" onclick="copySectionText('${sec.id}', this)" title="Copy Section Content">
+              <span>📋</span> Copy
+            </button>
+          </div>
+        </div>
+        <div class="prompt-card-body">
+          ${extraContent}
+          <pre class="prompt-code-block"><code>${escapeHtml(sec.content)}</code></pre>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function togglePromptSection(sectionId) {
+  const card = document.getElementById(`prompt-card-${sectionId}`);
+  if (card) {
+    card.classList.toggle("collapsed");
+  }
+}
+
+function toggleToolSchema(toolName) {
+  const card = document.getElementById(`tool-schema-${toolName}`);
+  if (card) {
+    card.classList.toggle("collapsed");
+  }
+}
+
+function scrollToPromptSection(sectionId) {
+  const card = document.getElementById(`prompt-card-${sectionId}`);
+  if (card) {
+    if (card.classList.contains("collapsed")) {
+      card.classList.remove("collapsed");
+    }
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+function filterPromptContent() {
+  if (!currentPromptSnapshot) return;
+  const query = (document.getElementById("prompt-search").value || "").toLowerCase().trim();
+
+  currentPromptSnapshot.sections.forEach(sec => {
+    const card = document.getElementById(`prompt-card-${sec.id}`);
+    if (!card) return;
+    if (!query) {
+      card.style.display = "";
+      return;
+    }
+    const match = sec.title.toLowerCase().includes(query) ||
+                  sec.category.toLowerCase().includes(query) ||
+                  sec.content.toLowerCase().includes(query);
+    card.style.display = match ? "" : "none";
+    if (match && card.classList.contains("collapsed")) {
+      card.classList.remove("collapsed");
+    }
+  });
+}
+
+async function copyFullPrompt() {
+  if (!activeSessionId) return;
+  const btn = document.getElementById("btn-copy-prompt");
+  const textEl = document.getElementById("copy-prompt-text");
+  const iconEl = document.getElementById("copy-prompt-icon");
+  try {
+    const res = await fetch(`/api/conversations/${activeSessionId}/prompt/raw`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    await navigator.clipboard.writeText(text);
+    if (textEl) textEl.innerText = "Copied Full Prompt!";
+    if (iconEl) iconEl.innerText = "✓";
+    if (btn) btn.style.borderColor = "var(--accent-green)";
+    setTimeout(() => {
+      if (textEl) textEl.innerText = "Copy Full Prompt";
+      if (iconEl) iconEl.innerText = "📋";
+      if (btn) btn.style.borderColor = "";
+    }, 2000);
+  } catch (err) {
+    alert("Failed to copy full prompt: " + err.message);
+  }
+}
+
+function copySectionText(sectionId, btnEl) {
+  if (!currentPromptSnapshot) return;
+  const sec = currentPromptSnapshot.sections.find(s => s.id === sectionId);
+  if (!sec) return;
+  navigator.clipboard.writeText(sec.content).then(() => {
+    if (btnEl) {
+      const orig = btnEl.innerHTML;
+      btnEl.innerHTML = "<span>✓</span> Copied!";
+      btnEl.style.color = "var(--accent-green)";
+      setTimeout(() => {
+        btnEl.innerHTML = orig;
+        btnEl.style.color = "";
+      }, 1500);
+    }
+  }).catch(err => {
+    console.error("Clipboard copy failed:", err);
+  });
+}
+
 // Search sessions in sidebar
 document.getElementById("session-search").addEventListener("input", (e) => {
   const query = e.target.value.toLowerCase();
@@ -932,3 +1180,4 @@ document.getElementById("session-search").addEventListener("input", (e) => {
 // Initial load & poll sessions list every 5s
 loadSessions();
 setInterval(loadSessions, 5000);
+

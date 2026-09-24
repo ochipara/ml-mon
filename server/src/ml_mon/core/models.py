@@ -184,6 +184,9 @@ class ContextWindowReport(BaseModel):
     total_active_tokens: int = 0
     total_session_chars: int = 0
     total_session_tokens: int = 0
+    has_prompt_snapshot: bool = False
+    system_prompt_tokens: int = 0
+    tool_declarations_tokens: int = 0
     breakdown: list[UsageBreakdown] = Field(default_factory=list)
     frames: list[ContextFrame] = Field(default_factory=list)
 
