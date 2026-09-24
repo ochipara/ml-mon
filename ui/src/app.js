@@ -291,6 +291,71 @@ function appendStepToTimeline(step, shouldScroll) {
         </div>
       </div>
     `);
+  } else if (step.step_type === "CONVERSATION_HISTORY") {
+    const histText = step.raw_content || "No past conversations.";
+    const bodyId = `sys-body-${step.step_index}`;
+    cards.push(`
+      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(histText.toLowerCase())}">
+        <div class="card-header clickable" onclick="toggleCardBody('${bodyId}')">
+          <span>
+            <span class="tool-toggle-icon">▶</span>
+            📜 <strong>System: Past Conversation History</strong>
+          </span>
+          <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
+        </div>
+        <div class="card-body markdown-body" id="${bodyId}" style="display: none;">
+          ${renderMarkdown(histText)}
+        </div>
+      </div>
+    `);
+  } else if (step.step_type === "KNOWLEDGE_ARTIFACTS") {
+    const kiText = step.raw_content ? step.raw_content : "*No matching knowledge items were injected for this query.*";
+    const bodyId = `sys-body-${step.step_index}`;
+    const badgeText = step.raw_content ? "" : '<span class="dim-text" style="font-size: 12px; margin-left: 8px;">(0 matched items)</span>';
+    cards.push(`
+      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(kiText.toLowerCase())}">
+        <div class="card-header clickable" onclick="toggleCardBody('${bodyId}')">
+          <span>
+            <span class="tool-toggle-icon">▶</span>
+            📚 <strong>System: Knowledge Base Items</strong>${badgeText}
+          </span>
+          <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
+        </div>
+        <div class="card-body markdown-body" id="${bodyId}" style="display: none;">
+          ${renderMarkdown(kiText)}
+        </div>
+      </div>
+    `);
+  } else if (step.step_type === "SYSTEM_MESSAGE") {
+    const sysMsg = step.raw_content || "";
+    const bodyId = `sys-body-${step.step_index}`;
+    cards.push(`
+      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(sysMsg.toLowerCase())}">
+        <div class="card-header clickable" onclick="toggleCardBody('${bodyId}')">
+          <span>
+            <span class="tool-toggle-icon">▶</span>
+            ℹ️ <strong>System Directive</strong>
+          </span>
+          <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
+        </div>
+        <div class="card-body markdown-body" id="${bodyId}" style="display: none;">
+          ${renderMarkdown(sysMsg)}
+        </div>
+      </div>
+    `);
+  } else if (step.step_type === "USER_SETTINGS_CHANGE") {
+    const setMsg = step.raw_content || "";
+    cards.push(`
+      <div class="timeline-card card-system step-system" data-type="checkpoint" data-is-error="false" data-search="${escapeHtml(setMsg.toLowerCase())}">
+        <div class="card-header">
+          <span>⚙️ <strong>User Settings Change</strong></span>
+          <span class="tool-badge">Step ${step.step_index}${timeStr ? ' • 🕒 ' + timeStr : ''}</span>
+        </div>
+        <div class="card-body markdown-body">
+          ${renderMarkdown(setMsg)}
+        </div>
+      </div>
+    `);
   }
 
   // 1. User Request
